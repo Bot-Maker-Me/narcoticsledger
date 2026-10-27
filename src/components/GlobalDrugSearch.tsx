@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Search, X, Package, TrendingUp, TrendingDown, Calendar, Clock } from 'lucide-react';
 import { useDrugs } from '@/hooks/useDrugs';
 import { useAllReconciliationItems } from '@/hooks/useReconciliation';
+import { formatDate } from '@/lib/dates';
 import type { DrugWithStock } from '@/types/drug';
 
 interface DrugSearchResult {
@@ -199,7 +200,7 @@ function DrugDetailsModal({ drugData, onClose }: { drugData: DrugSearchResult; o
               <div className="rounded-lg bg-neutral-50 p-4">
                 <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Last Updated</p>
                 <p className="mt-1 text-sm font-medium text-neutral-700">
-                  {lastUpdated ? new Date(lastUpdated).toLocaleDateString() : 'N/A'}
+                  {lastUpdated ? formatDate(lastUpdated) : 'N/A'}
                 </p>
               </div>
             </div>
@@ -235,7 +236,7 @@ function DrugDetailsModal({ drugData, onClose }: { drugData: DrugSearchResult; o
               <div className="space-y-2 text-sm">
                 <div className="flex items-center gap-2 text-neutral-600">
                   <Calendar className="h-4 w-4" />
-                  <span>Added: {new Date(drug.created_at).toLocaleDateString()}</span>
+                  <span>Added: {formatDate(drug.created_at)}</span>
                 </div>
                 {drug.description && (
                   <div className="flex items-start gap-2 text-neutral-600">

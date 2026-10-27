@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { dinCandidates, digitsOf, normalizeDin } from '@/lib/din';
 import type { DrugSchedule } from '@/types/drug';
 
 /**
@@ -9,8 +10,8 @@ import type { DrugSchedule } from '@/types/drug';
  * dispense) and every manual entry is matched against it so the DIN is identified and
  * given its CDSA schedule.
  *
- * DINs that do not match exactly are retried with leading zeros added (and removed),
- * because supplier exports often drop the leading zeros of an 8 digit DIN.
+ * DIN normalisation and matching live in `@/lib/din`; this module is only the reference
+ * lookup service.
  */
 export interface DinReferenceEntry {
   din: string;
@@ -23,35 +24,6 @@ export interface DinReferenceEntry {
 
 /** Entries resolved this session; null means "the reference does not know this DIN". */
 const cache = new Map<string, DinReferenceEntry | null>();
-
-/** Digits only, padded to 8 characters (the DPD/supplier DIN format). */
-function normalizeDin(raw: unknown): string | null {
-  const digits = String(raw ?? '').replace(/\D/g, '');
-  if (!digits) return null;
-  return digits.padStart(8, '0');
-}
-
-function digitsOf(raw: unknown): string {
-  return String(raw ?? '').replace(/\D/g, '');
-}
-
-/** Candidate keys for a DIN, adding and removing leading zeros. */
-function dinCandidates(digits: string): string[] {
-  if (!digits) return [];
-
-  const candidates: string[] = [digits];
-  for (let length = digits.length + 1; length <= 8; length += 1) {
-    candidates.push(digits.padStart(length, '0'));
-  }
-  candidates.push(digits.padStart(8, '0'));
-
-  const trimmed = digits.replace(/^0+/, '');
-  if (trimmed && trimmed !== digits) {
-    candidates.push(trimmed, trimmed.padStart(8, '0'));
-  }
-
-  return candidates;
-}
 
 /** Maps CDSA schedule text (e.g. "CONTROLLED DRUGS (CDSA III)") onto app values. */
 function mapCdsaSchedule(label?: string): DrugSchedule | undefined {
@@ -76,28 +48,14 @@ export function referenceLabel(entry: DinReferenceEntry): string {
 }
 
 /**
- * Compares two DINs ignoring separators and leading zeros, so a DIN pasted without its
- * leading zero (or with extra ones) still matches the stored value.
- */
-export function isSameDin(left: string, right: string): boolean {
-  const digitsLeft = String(left ?? '').replace(/\D/g, '').replace(/^0+/, '');
-  const digitsRight = String(right ?? '').replace(/\D/g, '').replace(/^0+/, '');
-  return digitsLeft !== '' && digitsLeft === digitsRight;
-}
-
-/**
  * Looks a DIN up in the entries resolved so far, retrying with leading zeros added
  * (and removed) when the exact value is not present.
  */
 export function getDinReferenceEntry(rawDin: string): DinReferenceEntry | null {
-  const digits = digitsOf(rawDin);
-  if (!digits) return null;
-
-  for (const candidate of dinCandidates(digits)) {
+  for (const candidate of dinCandidates(digitsOf(rawDin))) {
     const match = cache.get(candidate);
     if (match) return match;
   }
-
   return null;
 }
 

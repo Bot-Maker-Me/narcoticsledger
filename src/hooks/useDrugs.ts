@@ -1,23 +1,19 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { fetchStockByDrugId } from '@/lib/stockLevels';
+import { stockLevelsQuery } from '@/lib/stockLevels';
 import type { Drug, DrugFormData, DrugWithStock } from '@/types/drug';
 
-async function fetchDrugs(): Promise<DrugWithStock[]> {
+const DRUG_COLUMNS = 'id, user_id, din, description, schedule, pack_size, reorder_level, created_at';
+
+async function fetchDrugs(queryClient: QueryClient): Promise<DrugWithStock[]> {
   const { data, error } = await supabase
     .from('drugs')
-    .select('id, user_id, din, description, schedule, pack_size, reorder_level, created_at')
+    .select(DRUG_COLUMNS)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
 
-  let stockMap = new Map<string, number>();
-  try {
-    stockMap = await fetchStockByDrugId();
-  } catch (err) {
-    console.error('Failed to fetch stock levels:', err);
-    stockMap = new Map();
-  }
+  const stockMap = await queryClient.fetchQuery(stockLevelsQuery);
 
   return (data ?? []).map((row) => ({
     id: row.id,
@@ -78,50 +74,36 @@ async function checkDinUnique(din: string, excludeId?: string): Promise<boolean>
 }
 
 export function useDrugs() {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ['drugs'],
-    queryFn: fetchDrugs,
+    queryFn: () => fetchDrugs(queryClient),
+  });
+}
+
+/** Invalidates the drug list, which also refreshes the nested stock query. */
+function useDrugMutation<TVariables, TData>(mutationFn: (variables: TVariables) => Promise<TData>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['drugs'] }),
   });
 }
 
 export function useCreateDrug() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: createDrug,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['drugs'] });
-    },
-  });
+  return useDrugMutation(createDrug);
 }
 
 export function useUpdateDrug() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: updateDrug,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['drugs'] });
-    },
-  });
+  return useDrugMutation(updateDrug);
 }
 
 export function useUpdatePackSize() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: updatePackSize,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['drugs'] });
-    },
-  });
+  return useDrugMutation(updatePackSize);
 }
 
 export function useDeleteDrug() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: deleteDrug,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['drugs'] });
-    },
-  });
+  return useDrugMutation(deleteDrug);
 }
 
 export function useCheckDinUnique() {

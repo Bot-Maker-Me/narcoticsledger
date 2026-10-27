@@ -1,135 +1,119 @@
-import jsPDF from 'jspdf';
 import type { ReconciliationItemDraft } from '@/types/reconciliation';
+import { formatDate } from '@/lib/dates';
 
-export function exportToCSV(items: ReconciliationItemDraft[], filename: string = 'reconciliation.csv') {
-  const headers = ['DIN', 'Description', 'Opening Balance', 'Purchased', 'Dispensed', 'Expected', 'Actual', 'Variance', 'Flag'];
-  
-  const rows = items.map(item => {
+const HEADERS = [
+  'DIN',
+  'Description',
+  'Opening Balance',
+  'Purchased',
+  'Dispensed',
+  'Expected',
+  'Actual',
+  'Variance',
+  'Flag',
+];
+
+/** Rows shared by the CSV and PDF exports, so the two can never drift apart. */
+function toRows(items: ReconciliationItemDraft[]): string[][] {
+  return items.map((item) => {
     const expected = item.opening_balance + item.purchased_count - item.dispensed_count;
     const variance = item.actual_count !== null ? item.actual_count - expected : null;
-    
+
     return [
       item.din,
-      `"${item.description}"`,
-      item.opening_balance,
-      item.purchased_count,
-      item.dispensed_count,
-      expected,
-      item.actual_count ?? '',
-      variance !== null ? variance : '',
-      item.flag
-    ].join(',');
+      item.description ?? '',
+      String(item.opening_balance),
+      String(item.purchased_count),
+      String(item.dispensed_count),
+      String(expected),
+      item.actual_count !== null ? String(item.actual_count) : '',
+      variance !== null ? String(variance) : '',
+      item.flag,
+    ];
   });
-  
-  const csvContent = [headers.join(','), ...rows].join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const link = document.createElement('a');
-  
-  if ((navigator as any).msSaveBlob) {
-    (navigator as any).msSaveBlob(blob, filename);
-  } else {
-    link.href = URL.createObjectURL(blob);
-    link.download = filename;
-    link.click();
-    URL.revokeObjectURL(link.href);
-  }
 }
 
-export function exportToPDF(items: ReconciliationItemDraft[], filename: string = 'reconciliation.pdf') {
+function downloadBlob(blob: Blob, filename: string) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+export function exportToCSV(items: ReconciliationItemDraft[], filename = 'reconciliation.csv') {
+  const escape = (cell: string) => `"${cell.replace(/"/g, '""')}"`;
+  const lines = [HEADERS.join(','), ...toRows(items).map((row) => row.map(escape).join(','))];
+
+  downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' }), filename);
+}
+
+/**
+ * Renders the reconciliation table as a PDF.
+ *
+ * `jspdf` is imported on demand — it is a large dependency that most sessions never
+ * touch, so it stays out of the initial bundle.
+ */
+export async function exportToPDF(items: ReconciliationItemDraft[], filename = 'reconciliation.pdf') {
+  const { default: jsPDF } = await import('jspdf');
+
   const doc = new jsPDF();
-  
-  // Title
+  const columnWidths = [20, 45, 15, 15, 15, 15, 15, 15, 15];
+  const rowHeight = 7;
+
+  const xForColumn = (index: number) => 14 + columnWidths.slice(0, index).reduce((sum, width) => sum + width, 0);
+
   doc.setFontSize(18);
   doc.text('Reconciliation Report', 14, 22);
-  
-  // Date
+
   doc.setFontSize(10);
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 30);
-  
-  // Table headers
-  const headers = ['DIN', 'Description', 'Opening', 'Purchased', 'Dispensed', 'Expected', 'Actual', 'Variance', 'Flag'];
-  const colWidths = [20, 45, 15, 15, 15, 15, 15, 15, 15];
-  
-  let y = 40;
-  
-  // Draw headers
+  doc.text(`Generated: ${formatDate(new Date())}`, 14, 30);
+
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  headers.forEach((header, i) => {
-    let x = 14;
-    for (let j = 0; j < i; j++) {
-      x += colWidths[j];
-    }
-    doc.text(header, x, y);
-  });
-  
-  y += 7;
-  
-  // Draw line under headers
-  doc.line(14, y, 196, y);
-  y += 5;
-  
-  // Draw data rows
+  HEADERS.forEach((header, index) => doc.text(header, xForColumn(index), 40));
+  doc.line(14, 47, 196, 47);
+
   doc.setFont('helvetica', 'normal');
-  items.forEach((item, index) => {
+  let y = 52;
+
+  for (const row of toRows(items)) {
     if (y > 270) {
       doc.addPage();
       y = 20;
     }
-    
-    const expected = item.opening_balance + item.purchased_count - item.dispensed_count;
-    const variance = item.actual_count !== null ? item.actual_count - expected : null;
-    
-    const row = [
-      item.din,
-      (item.description || 'Unknown').substring(0, 30) + (item.description && item.description.length > 30 ? '...' : ''),
-      item.opening_balance.toString(),
-      item.purchased_count.toString(),
-      item.dispensed_count.toString(),
-      expected.toString(),
-      (item.actual_count?.toString() || ''),
-      variance !== null ? variance.toString() : '',
-      item.flag
-    ];
-    
-    row.forEach((cell, i) => {
-      let x = 14;
-      for (let j = 0; j < i; j++) {
-        x += colWidths[j];
-      }
-      doc.text(cell, x, y);
+    row.forEach((cell, index) => {
+      const text = index === 1 ? `${cell.substring(0, 30)}${cell.length > 30 ? '...' : ''}` : cell;
+      doc.text(text, xForColumn(index), y);
     });
-    
-    y += 7;
-  });
-  
-  // Summary
-  const counted = items.filter(i => i.actual_count !== null).length;
-  const ok = items.filter(i => i.flag === 'OK').length;
-  const review = items.filter(i => i.flag === 'Review').length;
-  const verify = items.filter(i => i.flag === 'Verify').length;
-  
+    y += rowHeight;
+  }
+
   if (y > 240) {
     doc.addPage();
     y = 20;
   }
-  
+
+  const counts = { OK: 0, Review: 0, Verify: 0, counted: 0 };
+  for (const item of items) {
+    if (item.actual_count !== null) counts.counted += 1;
+    if (item.flag === 'OK' || item.flag === 'Review' || item.flag === 'Verify') counts[item.flag] += 1;
+  }
+
   y += 10;
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.text('Summary', 14, y);
-  y += 7;
-  
+
   doc.setFont('helvetica', 'normal');
-  doc.text(`Total Items: ${items.length}`, 14, y);
-  y += 5;
-  doc.text(`Counted: ${counted}`, 14, y);
-  y += 5;
-  doc.text(`OK: ${ok}`, 14, y);
-  y += 5;
-  doc.text(`Review: ${review}`, 14, y);
-  y += 5;
-  doc.text(`Verify: ${verify}`, 14, y);
-  
+  const summary = [
+    `Total Items: ${items.length}`,
+    `Counted: ${counts.counted}`,
+    `OK: ${counts.OK}`,
+    `Review: ${counts.Review}`,
+    `Verify: ${counts.Verify}`,
+  ];
+  summary.forEach((line, index) => doc.text(line, 14, y + 7 + index * 5));
+
   doc.save(filename);
 }

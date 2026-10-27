@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Hash, X } from 'lucide-react';
-import { isSameDin } from '@/lib/dinReference';
+import { isSameDin, looksLikeDin } from '@/lib/din';
+import { formatMonthYear } from '@/lib/dates';
 import { ledgerMonthKey } from '@/lib/ledgerDate';
 import type { ImportedRecordRow } from '@/hooks/useImportedRecords';
 
@@ -19,10 +20,7 @@ function shiftMonth(key: string, delta: number): string {
 
 function monthLabel(key: string): string {
   const [year, month] = key.split('-').map(Number);
-  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
-    month: 'long',
-    year: 'numeric',
-  });
+  return formatMonthYear(new Date(year, month - 1, 1));
 }
 
 /**
@@ -32,8 +30,7 @@ export default function DinMonthlyTotal({ records, loading, label }: DinMonthlyT
   const [din, setDin] = useState('');
   const [month, setMonth] = useState(() => ledgerMonthKey(new Date().toISOString()));
 
-  const digits = din.replace(/\D/g, '');
-  const ready = digits.length >= 6;
+  const ready = looksLikeDin(din);
 
   const matches = useMemo(() => {
     if (!records || !ready) return [];

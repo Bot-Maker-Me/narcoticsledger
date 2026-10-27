@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Loader2, Search, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuditLogs } from '@/hooks/useAdmin';
-import { formatDate } from '@/components/admin/shared';
+import { formatDate } from '@/lib/dates';
 
 export function AuditTab() {
   const { data: auditLogs, isLoading } = useAuditLogs();

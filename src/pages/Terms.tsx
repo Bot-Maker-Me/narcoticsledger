@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArrowLeft, FileText, Shield, Lock } from 'lucide-react';
+import { formatDate } from '@/lib/dates';
 
 export default function Terms() {
   return (
@@ -16,7 +17,7 @@ export default function Terms() {
             <h1 className="font-display text-3xl text-neutral-900">Terms of Service</h1>
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
-            <p><strong>Last Updated:</strong> {new Date().toLocaleDateString()}</p>
+            <p><strong>Last Updated:</strong> {formatDate(new Date())}</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">1. Acceptance of Terms</h3>
             <p>By accessing and using PharmaFlow, you agree to be bound by these Terms of Service and all applicable laws and regulations. If you do not agree with any of these terms, you are prohibited from using this service.</p>
@@ -79,7 +80,7 @@ export default function Terms() {
             <h1 className="font-display text-3xl text-neutral-900">Privacy Policy</h1>
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
-            <p><strong>Last Updated:</strong> {new Date().toLocaleDateString()}</p>
+            <p><strong>Last Updated:</strong> {formatDate(new Date())}</p>
             <p className="text-xs text-neutral-500 mb-4">This Privacy Policy is designed to comply with Canada's Personal Information Protection and Electronic Documents Act (PIPEDA) and applicable provincial privacy legislation.</p>
 
             <h3 className="text-lg font-semibold text-neutral-900">1. Information We Collect</h3>

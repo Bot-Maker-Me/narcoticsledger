@@ -1,7 +1,9 @@
 import { Loader2, Lock, Sparkles } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useSystemSettings, useCreateCheckoutSession } from '@/hooks/useAdmin';
-import { hasAccess, formatPrice } from '@/types/admin';
+import { hasAccess } from '@/lib/access';
+import { formatPrice } from '@/lib/format';
+import { formatDate } from '@/lib/dates';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 
@@ -142,12 +144,7 @@ export default function SubscriptionPaywall() {
 
             {isExpired && profile.trial_ends_at && (
               <p className="mt-3 text-center text-xs text-neutral-400">
-                Your trial ended on{' '}
-                {new Date(profile.trial_ends_at).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
+                Your trial ended on {formatDate(profile.trial_ends_at)}
               </p>
             )}
 

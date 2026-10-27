@@ -17,9 +17,9 @@ expected vs. actual counts, and keep an audit-ready ledger of every transaction.
 | Server state | TanStack React Query v5 |
 | Backend | Supabase (Postgres, Auth, RPCs, Storage, Edge Functions) |
 | Styling | Tailwind CSS v3 (custom dark theme) |
-| Charts | Recharts |
-| Files | PapaParse (CSV) + SheetJS (XLSX/XLS) |
-| Export | `jspdf` (PDF) + CSV helpers in `src/lib/exportUtils.ts` |
+| Charts | Recharts (lazy-loaded with the Reports route) |
+| Files | PapaParse (CSV) + SheetJS (XLSX/XLS, loaded on demand) |
+| Export | `jspdf` (PDF, loaded on demand) + CSV helpers in `src/lib/exportUtils.ts` |
 | Icons / toasts / motion | `lucide-react`, `react-hot-toast`, `framer-motion` |
 
 For the full library and design-system rules, see [`AI_RULES.md`](./AI_RULES.md).
@@ -62,13 +62,25 @@ src/
   App.tsx                 # All routes (public, protected, admin, 404)
   main.tsx                # React root + QueryClient provider
   context/AuthContext.tsx # Session + profile + auth actions (useAuth)
-  components/             # Reusable UI primitives (PascalCase)
+  components/
+    ui/                   # Generic primitives (ConfirmDialog, DropZone, EmptyState)
+    records/              # The record domain (browser, upload pieces, per-kind config)
     admin/                # Admin dashboard tabs
     reconciliation/       # Reconciliation views (landing, table, detail, history)
   hooks/                  # One React Query module per domain (useDrugs, useAdmin, ...)
-  lib/                    # Pure helpers (fileParser, exportUtils, ledgerDate, dinReference, supabase)
-  pages/                  # Routed pages
-  types/                  # Domain types
+  lib/                    # Pure helpers, one concern per file:
+                          #   din.ts        DIN parsing/comparison (single source of truth)
+                          #   dates.ts      date/number display formatting
+                          #   format.ts     money and byte formatting
+                          #   access.ts     subscription/trial gating
+                          #   ledgerDate.ts calendar-day parsing (timezone-safe)
+                          #   fileParser.ts supplier export parsing
+                          #   dinReference.ts  CDSA/DPD lookup service
+                          #   exportUtils.ts   CSV/PDF export
+                          #   stockLevels.ts   shared stock query
+                          #   supabase.ts      the single Supabase client
+  pages/                  # Routed pages (thin wrappers around feature components)
+  types/                  # Domain types only — no runtime code
 supabase/
   migrations/             # Source of truth for the schema
   functions/              # Edge functions (din-reference, stripe-checkout, stripe-webhook)
@@ -83,8 +95,14 @@ scripts/legacy-sql/       # HISTORICAL one-off SQL — not run automatically
   components (e.g. `src/components/reconciliation/`, `src/components/admin/`) so state and
   UI stay separate and each file has one concern.
 - **Routes only in `src/App.tsx`.** Add a page, then mount it there so it is reachable.
+- **One primitive, one home.** DIN handling lives in `@/lib/din`, date formatting in
+  `@/lib/dates`, money in `@/lib/format`. Nothing re-implements padding or formatting.
 - **Use the shared building blocks**: `@/lib/supabase` for the client, `useAuth()` for
-  session, `card` / `btn-primary` / `input-field` for consistent styling.
+  session, `@/components/ui/ConfirmDialog` (`useConfirm()`) instead of `window.confirm`,
+  `@/components/ui/DropZone` for uploads, and `card` / `btn-primary` / `input-field` for
+  consistent styling.
+- **Heavy dependencies load on demand.** `xlsx`, `jspdf` and `recharts` are dynamically
+  imported so they stay out of the initial bundle — keep it that way.
 
 ## Data, auth & security
 

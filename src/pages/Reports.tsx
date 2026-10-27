@@ -4,7 +4,7 @@ import { useDrugs } from '@/hooks/useDrugs';
 import { usePrescriptions } from '@/hooks/usePrescriptions';
 import { useReconciliationCycles } from '@/hooks/useReconciliation';
 import { useAllReconciliationItems } from '@/hooks/useReconciliation';
-import { exportToCSV, exportToPDF } from '@/lib/exportUtils';
+import { exportToCSV } from '@/lib/exportUtils';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 import { motion } from 'framer-motion';
 import type { ReconciliationItemDraft } from '@/types/reconciliation';

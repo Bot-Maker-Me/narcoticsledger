@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, type DragEvent } from 'react';
+import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import toast from 'react-hot-toast';
 import { useDrugs } from '@/hooks/useDrugs';
 import {
@@ -11,10 +11,18 @@ import {
   useDeleteCycle,
   computeFlag,
 } from '@/hooks/useReconciliation';
-import { mergeDinData, deduplicateDinData, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
+import { useReconciliationDraft } from '@/hooks/useReconciliationDraft';
+import { useFileList } from '@/hooks/useFileList';
+import { deduplicateDinData, mergeDinData, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
 import { createPackSizeResolver, getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
+import { isSameDin, padDin } from '@/lib/din';
 import { supabase } from '@/lib/supabase';
-import type { ReconciliationItemDraft, CycleFormData, HistoryState } from '@/types/reconciliation';
+import type {
+  CycleFormData,
+  HistoryState,
+  ParsedDinData,
+  ReconciliationItemDraft,
+} from '@/types/reconciliation';
 import { EMPTY_CHECKLIST, DEFAULT_COUNT_LOCATIONS } from '@/types/reconciliation';
 import CountLocationsModal from '@/components/CountLocationsModal';
 import { LandingView } from '@/components/reconciliation/ReconciliationLanding';
@@ -24,9 +32,23 @@ import { PastCyclesView, DeleteDialog } from '@/components/reconciliation/Reconc
 import { FilePreviewModal } from '@/components/reconciliation/FilePreviewModal';
 
 type View = 'landing' | 'table' | 'past' | 'detail';
+type Zone = 'mckesson' | 'kroll';
+type EditableField = 'opening' | 'purchased' | 'dispensed';
 
-// History management for undo/redo
+/** Undo/redo depth for the counting table. */
 const MAX_HISTORY = 50;
+
+const EMPTY_CYCLE_FORM: CycleFormData = {
+  start_date: '',
+  end_date: '',
+  performed_by: '',
+  verified_by: '',
+  notes: '',
+  checklist: { ...EMPTY_CHECKLIST },
+};
+
+const expectedFor = (item: Pick<ReconciliationItemDraft, 'opening_balance' | 'purchased_count' | 'dispensed_count'>) =>
+  item.opening_balance + item.purchased_count - item.dispensed_count;
 
 export default function Reconciliation() {
   const { data: drugs } = useDrugs();
@@ -35,49 +57,36 @@ export default function Reconciliation() {
   const [view, setView] = useState<View>('landing');
   const [draftItems, setDraftItems] = useState<ReconciliationItemDraft[]>([]);
 
-  // Multiple files per zone support
-  const [mckessonFiles, setMckessonFiles] = useState<File[]>([]);
-  const [krollFiles, setKrollFiles] = useState<File[]>([]);
+  const mckesson = useFileList();
+  const kroll = useFileList();
   const [parsing, setParsing] = useState(false);
-  const [mckessonDragOver, setMckessonDragOver] = useState(false);
-  const [krollDragOver, setKrollDragOver] = useState(false);
-  const [filePreviews, setFilePreviews] = useState<{
-    mckesson: FilePreview[];
-    kroll: FilePreview[];
-  }>({ mckesson: [], kroll: [] });
+  const [filePreviews, setFilePreviews] = useState<{ mckesson: FilePreview[]; kroll: FilePreview[] }>({
+    mckesson: [],
+    kroll: [],
+  });
   const [showPreviewModal, setShowPreviewModal] = useState(false);
 
-  // Saved count file upload
-  const [startFromPrevious, setStartFromPrevious] = useState(false);
+  // Opening balances
   const [startFromPreviousMode, setStartFromPreviousMode] = useState<'database' | 'file' | 'zero'>('zero');
   const [savedCountFile, setSavedCountFile] = useState<File | null>(null);
   const [savedCountDragOver, setSavedCountDragOver] = useState(false);
   const [savedCounts, setSavedCounts] = useState<Map<string, number>>(new Map());
 
-  // Store existing parsed data for deduplication
-  const [existingMckessonData, setExistingMckessonData] = useState<Map<string, any>>(new Map());
-  const [existingKrollData, setExistingKrollData] = useState<Map<string, any>>(new Map());
+  // Parsed data kept for deduplication across successive uploads
+  const [existingMckessonData, setExistingMckessonData] = useState<Map<string, ParsedDinData>>(new Map());
+  const [existingKrollData, setExistingKrollData] = useState<Map<string, ParsedDinData>>(new Map());
   const [existingDateRange, setExistingDateRange] = useState<{ start: Date | null; end: Date | null } | null>(null);
   const [skippedDuplicates, setSkippedDuplicates] = useState(0);
 
-  // Edit functionality for opening/purchased/dispensed columns
+  // Inline editing of the counting table
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [editingField, setEditingField] = useState<'opening' | 'purchased' | 'dispensed' | null>(null);
+  const [editingField, setEditingField] = useState<EditableField | null>(null);
 
-  const [cycleForm, setCycleForm] = useState<CycleFormData>({
-    start_date: '',
-    end_date: '',
-    performed_by: '',
-    verified_by: '',
-    notes: '',
-    checklist: { ...EMPTY_CHECKLIST },
-  });
-
+  const [cycleForm, setCycleForm] = useState<CycleFormData>(EMPTY_CYCLE_FORM);
   const [activeCycleId, setActiveCycleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
 
-  // New states for enhanced features
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [history, setHistory] = useState<HistoryState[]>([]);
@@ -85,234 +94,73 @@ export default function Reconciliation() {
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [selectedItemForVerify, setSelectedItemForVerify] = useState<number | null>(null);
   const [verifyNote, setVerifyNote] = useState('');
+  const [locationEditIndex, setLocationEditIndex] = useState<number | null>(null);
 
   const createMutation = useCreateCycleWithItems();
   const completeMutation = useCompleteCycle();
   const deleteMutation = useDeleteCycle();
   const updateMutation = useUpdateActualCount();
   const openingMutation = useUpdateOpeningBalance();
-  const [locationEditIndex, setLocationEditIndex] = useState<number | null>(null);
   const { data: activeCycleItems } = useReconciliationItems(activeCycleId);
 
-  // Auto-save draft functionality
-  useEffect(() => {
-    const autoSaveDraft = async () => {
-      if (draftItems.length === 0 || !drugs) return;
+  const hasUploadedFiles = mckesson.files.length > 0 || kroll.files.length > 0;
 
-      // Only auto-save if we have meaningful data (files uploaded and processed)
-      if (mckessonFiles.length === 0 && krollFiles.length === 0) return;
+  useReconciliationDraft({
+    items: draftItems,
+    enabled: draftItems.length > 0 && hasUploadedFiles && !!drugs,
+    draftId: currentDraftId,
+    onDraftCreated: setCurrentDraftId,
+  });
 
-      try {
-        const { data: userData } = await supabase.auth.getUser();
-        if (!userData.user) return;
+  // ---------------------------------------------------------------- undo / redo
 
-        if (currentDraftId) {
-          // Update existing draft
-          const { error } = await supabase
-            .from('reconciliation_items')
-            .upsert(
-              draftItems.map(item => ({
-                cycle_id: currentDraftId,
-                user_id: userData.user.id,
-                drug_id: item.drug_id,
-                din: item.din,
-                description: item.description,
-                schedule: item.schedule,
-                opening_balance: item.opening_balance,
-                purchased_count: item.purchased_count,
-                dispensed_count: item.dispensed_count,
-                actual_count: item.actual_count,
-                flag: item.flag,
-                verify_note: item.verify_note,
-                locations: item.locations,
-              }))
-            );
+  // The ref mirrors the index so several edits in one tick cannot overwrite each other.
+  const historyIndexRef = useRef(-1);
 
-          if (error) {
-            console.error('Auto-save draft error:', error);
-          }
-        } else {
-          // Create new draft cycle
-          const { data: newCycle, error: cycleError } = await supabase
-            .from('reconciliation_cycles')
-            .insert({
-              user_id: userData.user.id,
-              status: 'draft',
-              name: `Draft - ${new Date().toLocaleDateString()}`,
-              start_date: new Date().toISOString(),
-            })
-            .select()
-            .single();
+  const setIndex = useCallback((value: number) => {
+    historyIndexRef.current = value;
+    setHistoryIndex(value);
+  }, []);
 
-          if (cycleError) {
-            console.error('Error creating draft cycle:', cycleError);
-            return;
-          }
+  const recordHistory = useCallback((snapshot: ReconciliationItemDraft[]) => {
+    const currentIndex = historyIndexRef.current;
 
-          setCurrentDraftId(newCycle.id);
-
-          // Save items to the new draft
-          const { error: itemsError } = await supabase
-            .from('reconciliation_items')
-            .insert(
-              draftItems.map(item => ({
-                cycle_id: newCycle.id,
-                user_id: userData.user.id,
-                drug_id: item.drug_id,
-                din: item.din,
-                description: item.description,
-                schedule: item.schedule,
-                opening_balance: item.opening_balance,
-                purchased_count: item.purchased_count,
-                dispensed_count: item.dispensed_count,
-                actual_count: item.actual_count,
-                flag: item.flag,
-                verify_note: item.verify_note,
-                locations: item.locations,
-              }))
-            );
-
-          if (itemsError) {
-            console.error('Error saving draft items:', itemsError);
-          }
-        }
-      } catch (error) {
-        console.error('Auto-save error:', error);
-      }
-    };
-
-    // Auto-save every 30 seconds
-    const interval = setInterval(autoSaveDraft, 30000);
-    return () => clearInterval(interval);
-  }, [draftItems, mckessonFiles, krollFiles, currentDraftId, drugs]);
-
-  // Save draft on page unload
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (draftItems.length > 0 && (mckessonFiles.length > 0 || krollFiles.length > 0)) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [draftItems, mckessonFiles, krollFiles]);
-
-  // History management
-  const addToHistory = useCallback((items: ReconciliationItemDraft[]) => {
-    const newState: HistoryState = {
-      items: JSON.parse(JSON.stringify(items)),
-      timestamp: Date.now(),
-    };
-
-    setHistory(prev => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      if (newHistory.length >= MAX_HISTORY) {
-        newHistory.shift();
-      }
-      return [...newHistory, newState];
+    setHistory((previous) => {
+      const kept = previous.slice(0, currentIndex + 1);
+      const capped = kept.length >= MAX_HISTORY ? kept.slice(kept.length - MAX_HISTORY + 1) : kept;
+      return [...capped, { items: [...snapshot], timestamp: Date.now() }];
     });
-    setHistoryIndex(prev => Math.min(prev + 1, MAX_HISTORY - 1));
-  }, [historyIndex]);
+
+    setIndex(Math.min(currentIndex + 1, MAX_HISTORY - 1));
+  }, [setIndex]);
 
   const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      const previousState = history[historyIndex - 1];
-      setDraftItems(JSON.parse(JSON.stringify(previousState.items)));
-      setHistoryIndex(historyIndex - 1);
-      toast.success('Undo successful');
-    }
-  }, [history, historyIndex]);
+    const current = historyIndexRef.current;
+    if (current <= 0) return;
+
+    setDraftItems([...history[current - 1].items]);
+    setIndex(current - 1);
+    toast.success('Undo successful');
+  }, [history, setIndex]);
 
   const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const nextState = history[historyIndex + 1];
-      setDraftItems(JSON.parse(JSON.stringify(nextState.items)));
-      setHistoryIndex(historyIndex + 1);
-      toast.success('Redo successful');
-    }
-  }, [history, historyIndex]);
+    const current = historyIndexRef.current;
+    if (current >= history.length - 1) return;
 
-  // Filter items based on search
+    setDraftItems([...history[current + 1].items]);
+    setIndex(current + 1);
+    toast.success('Redo successful');
+  }, [history, setIndex]);
+
+  // ---------------------------------------------------------------- derived data
+
   const filteredItems = useMemo(() => {
     if (!searchQuery) return draftItems;
     const query = searchQuery.toLowerCase();
-    return draftItems.filter(item =>
-      item.din.includes(query) ||
-      (item.description ?? '').toLowerCase().includes(query)
+    return draftItems.filter(
+      (item) => item.din.includes(query) || (item.description ?? '').toLowerCase().includes(query)
     );
   }, [draftItems, searchQuery]);
-
-  // Calculate progress
-  const progress = useMemo(() => {
-    if (draftItems.length === 0) return 0;
-    const counted = draftItems.filter(item => item.actual_count !== null).length;
-    return Math.round((counted / draftItems.length) * 100);
-  }, [draftItems]);
-
-  // Handle verify workflow
-  const handleVerifyItem = useCallback((index: number) => {
-    setSelectedItemForVerify(index);
-    setVerifyNote(draftItems[index].verify_note || '');
-    setVerifyModalOpen(true);
-  }, [draftItems]);
-
-  const saveVerifyNote = useCallback(() => {
-    if (selectedItemForVerify !== null) {
-      setDraftItems(prev => {
-        const next = [...prev];
-        next[selectedItemForVerify] = {
-          ...next[selectedItemForVerify],
-          verify_note: verifyNote,
-          flag: 'Verify',
-        };
-        addToHistory(next);
-        return next;
-      });
-      setVerifyModalOpen(false);
-      setSelectedItemForVerify(null);
-      setVerifyNote('');
-      toast.success('Verification note saved');
-    }
-  }, [selectedItemForVerify, verifyNote, addToHistory]);
-
-  // Bulk edit functionality
-  const handleBulkEdit = useCallback((value: number | null) => {
-    setDraftItems(prev => {
-      const next = prev.map(item => {
-        if (item.selected) {
-          const expected = item.opening_balance + item.purchased_count - item.dispensed_count;
-          return {
-            ...item,
-            actual_count: value,
-            flag: computeFlag(value, expected, item.schedule),
-          };
-        }
-        return item;
-      });
-      addToHistory(next);
-      return next;
-    });
-    setBulkEditMode(false);
-    toast.success(`Updated ${draftItems.filter(i => i.selected).length} items`);
-  }, [draftItems, addToHistory]);
-
-  const toggleSelectAll = useCallback(() => {
-    const allSelected = filteredItems.every(item => item.selected);
-    setDraftItems(prev => prev.map(item => ({
-      ...item,
-      selected: !allSelected,
-    })));
-  }, [filteredItems]);
-
-  const toggleItemSelection = useCallback((index: number) => {
-    setDraftItems(prev => {
-      const next = [...prev];
-      next[index] = { ...next[index], selected: !next[index].selected };
-      return next;
-    });
-  }, []);
 
   // Pack size per DIN: CDSA/DPD reference first, then the drug record's Pack Size.
   const packSizeFor = useMemo(() => createPackSizeResolver(drugs ?? []), [drugs]);
@@ -331,121 +179,136 @@ export default function Reconciliation() {
     return map;
   }, [drugs]);
 
-  const handleFileDrop = useCallback(
-    (e: DragEvent<HTMLDivElement>, zone: 'mckesson' | 'kroll') => {
-      e.preventDefault();
-      e.stopPropagation();
-      const files = Array.from(e.dataTransfer.files || []);
-      if (files.length === 0) return;
+  // ---------------------------------------------------------------- item editing
 
-      const validFiles = files.filter(file => {
-        const ext = file.name.split('.').pop()?.toLowerCase();
-        return ext === 'csv' || ext === 'xlsx' || ext === 'xls';
-      });
-
-      if (validFiles.length === 0) {
-        toast.error('Files must be .csv, .xlsx, or .xls');
-        return;
-      }
-
-      if (zone === 'mckesson') {
-        setMckessonFiles(prev => [...prev, ...validFiles]);
-        setMckessonDragOver(false);
-      } else {
-        setKrollFiles(prev => [...prev, ...validFiles]);
-        setKrollDragOver(false);
-      }
+  /** Replaces one item and records the change for undo. */
+  const updateItem = useCallback(
+    (index: number, patch: (item: ReconciliationItemDraft) => ReconciliationItemDraft) => {
+      const next = [...draftItems];
+      next[index] = patch(next[index]);
+      setDraftItems(next);
+      recordHistory(next);
     },
-    []
+    [draftItems, recordHistory]
   );
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, zone: 'mckesson' | 'kroll') => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+  const handleActualCountChange = (index: number, value: string) => {
+    const parsed = value === '' ? null : parseInt(value, 10);
+    if (parsed !== null && (isNaN(parsed) || parsed < 0)) return;
 
-    if (zone === 'mckesson') {
-      setMckessonFiles(prev => [...prev, ...files]);
-    } else {
-      setKrollFiles(prev => [...prev, ...files]);
-    }
+    updateItem(index, (item) => ({
+      ...item,
+      actual_count: parsed,
+      flag: computeFlag(parsed, expectedFor(item), item.schedule),
+    }));
   };
 
-  const handleRemoveFile = (index: number, zone: 'mckesson' | 'kroll') => {
-    if (zone === 'mckesson') {
-      setMckessonFiles(prev => prev.filter((_, i) => i !== index));
-    } else {
-      setKrollFiles(prev => prev.filter((_, i) => i !== index));
-    }
+  const handleNoteChange = (index: number, value: string) => {
+    updateItem(index, (item) => ({ ...item, note: value }));
   };
 
-  const handleClearAllFiles = (zone: 'mckesson' | 'kroll') => {
-    if (zone === 'mckesson') {
-      setMckessonFiles([]);
-    } else {
-      setKrollFiles([]);
-    }
+  const handleNumberEdit = (
+    index: number,
+    field: 'opening_balance' | 'purchased_count' | 'dispensed_count',
+    value: string
+  ) => {
+    const parsed = value === '' ? 0 : parseInt(value, 10);
+    if (isNaN(parsed) || parsed < 0) return;
+
+    updateItem(index, (item) => {
+      const updated: ReconciliationItemDraft = {
+        ...item,
+        opening_balance: field === 'opening_balance' ? parsed : item.opening_balance,
+        purchased_count: field === 'purchased_count' ? parsed : item.purchased_count,
+        dispensed_count: field === 'dispensed_count' ? parsed : item.dispensed_count,
+      };
+      return { ...updated, flag: computeFlag(updated.actual_count, expectedFor(updated), updated.schedule) };
+    });
   };
 
-  // Saved count file handlers
-  const handleSavedCountDrop = useCallback(
-    (e: DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const file = e.dataTransfer.files?.[0];
-      if (!file) return;
-
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      if (ext !== 'csv' && ext !== 'xlsx' && ext !== 'xls') {
-        toast.error('Saved count file must be .csv, .xlsx, or .xls');
-        return;
-      }
-      setSavedCountFile(file);
-      setSavedCountDragOver(false);
-      // Automatically parse the file when dropped
-      handleParseSavedCountFile();
-    },
-    []
-  );
-
-  const handleSavedCountSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setSavedCountFile(file);
-    // Automatically parse the file when selected
-    handleParseSavedCountFile();
+  const handleEditClick = (index: number, field: EditableField) => {
+    setEditingIndex(index);
+    setEditingField(field);
   };
 
-  const handleParseSavedCountFile = async () => {
-    if (!savedCountFile) return;
+  const handleEditBlur = () => {
+    setEditingIndex(null);
+    setEditingField(null);
+  };
 
+  const toggleSelectAll = () => {
+    const allSelected = filteredItems.length > 0 && filteredItems.every((item) => item.selected);
+    setDraftItems((previous) => previous.map((item) => ({ ...item, selected: !allSelected })));
+  };
+
+  const toggleItemSelection = (index: number) => {
+    setDraftItems((previous) => {
+      const next = [...previous];
+      next[index] = { ...next[index], selected: !next[index].selected };
+      return next;
+    });
+  };
+
+  const handleBulkEdit = (value: number | null) => {
+    const next = draftItems.map((item) => {
+      if (!item.selected) return item;
+      return { ...item, actual_count: value, flag: computeFlag(value, expectedFor(item), item.schedule) };
+    });
+
+    setDraftItems(next);
+    recordHistory(next);
+    setBulkEditMode(false);
+    toast.success(`Updated ${draftItems.filter((item) => item.selected).length} items`);
+  };
+
+  const handleVerifyItem = (index: number) => {
+    setSelectedItemForVerify(index);
+    setVerifyNote(draftItems[index].verify_note || '');
+    setVerifyModalOpen(true);
+  };
+
+  const saveVerifyNote = () => {
+    if (selectedItemForVerify === null) return;
+
+    updateItem(selectedItemForVerify, (item) => ({ ...item, verify_note: verifyNote, flag: 'Verify' }));
+
+    setVerifyModalOpen(false);
+    setSelectedItemForVerify(null);
+    setVerifyNote('');
+    toast.success('Verification note saved');
+  };
+
+  const applyLocationCounts = (index: number, locations: ReconciliationItemDraft['locations'], total: number) => {
+    updateItem(index, (item) => ({
+      ...item,
+      locations,
+      actual_count: total,
+      flag: computeFlag(total, expectedFor(item), item.schedule),
+    }));
+    setLocationEditIndex(null);
+    toast.success('Location counts applied');
+  };
+
+  // ---------------------------------------------------------------- saved count file
+
+  /** Reads the optional "saved counts" file the user supplies as an opening balance. */
+  const parseSavedCountFile = async (file: File) => {
     try {
-      // Parse the saved count file as CSV directly to access "Actual" column
-      const text = await savedCountFile.text();
+      const text = await file.text();
       const Papa = await import('papaparse');
       const result = Papa.parse(text, { header: true });
 
       const counts = new Map<string, number>();
 
-      // Look for DIN and Actual columns with multiple possible names
-      for (const row of result.data as any[]) {
-        const din = row['DIN'] || row['din'] || row['Drug Identification Number'] || row['Drug ID'];
-        const actualCount = row['Actual'] || row['actual'] || row['ACTUAL'] || row['actual_count'];
+      for (const row of result.data as Array<Record<string, unknown>>) {
+        const rawDin = row['DIN'] ?? row['din'] ?? row['Drug Identification Number'] ?? row['Drug ID'];
+        const rawActual = row['Actual'] ?? row['actual'] ?? row['ACTUAL'] ?? row['actual_count'];
+        if (!rawDin || !rawActual) continue;
 
-        if (din && actualCount) {
-          // Normalize DIN to handle leading zeros and formatting
-          let normalizedDin = din.toString().trim();
+        const din = padDin(rawDin);
+        const count = parseInt(String(rawActual).trim(), 10);
 
-          // Pad to 8 digits if it's a shorter DIN
-          if (normalizedDin.length < 8 && /^\d+$/.test(normalizedDin)) {
-            normalizedDin = normalizedDin.padStart(8, '0');
-          }
-
-          const count = parseInt(actualCount.toString().trim(), 10);
-
-          if (!isNaN(count) && count > 0) {
-            counts.set(normalizedDin, count);
-          }
-        }
+        if (din && !isNaN(count) && count > 0) counts.set(din, count);
       }
 
       setSavedCounts(counts);
@@ -456,215 +319,143 @@ export default function Reconciliation() {
         toast.success(`Loaded ${counts.size} saved counts from file`);
       }
     } catch (err) {
-      console.error('Error parsing saved count file:', err);
-      const message = err instanceof Error ? err.message : 'Failed to parse saved count file';
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : 'Failed to parse saved count file');
     }
   };
 
+  const handleSavedCountDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (ext !== 'csv' && ext !== 'xlsx' && ext !== 'xls') {
+      toast.error('Saved count file must be .csv, .xlsx, or .xls');
+      return;
+    }
+
+    setSavedCountFile(file);
+    setSavedCountDragOver(false);
+    void parseSavedCountFile(file);
+  };
+
+  const handleSavedCountSelect = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setSavedCountFile(file);
+    void parseSavedCountFile(file);
+  };
+
+  const handleSavedCountClear = () => {
+    setSavedCountFile(null);
+    setSavedCounts(new Map());
+  };
+
+  // ---------------------------------------------------------------- import
+
   const handleProcessFiles = async () => {
-    if (mckessonFiles.length === 0 || krollFiles.length === 0) {
+    if (mckesson.files.length === 0 || kroll.files.length === 0) {
       toast.error('Please upload at least one McKesson and one Kroll file');
       return;
     }
 
     setParsing(true);
     try {
-      // Create SHARED deduplication sets for each file type (to catch duplicates across multiple files)
+      // One shared signature set per source so a row repeated across files is only counted once.
       const mckessonSignatures = new Set<string>();
       const krollSignatures = new Set<string>();
 
-      // Process all McKesson files
-      const allMckessonData = new Map<string, any>();
-      const mckessonPreviews: FilePreview[] = [];
+      const { data: allMckessonData, previews: mckessonPreviews } = await parseZone(
+        mckesson.files,
+        'mckesson',
+        mckessonSignatures,
+        packSizeFor
+      );
+      const { data: allKrollData, previews: krollPreviews } = await parseZone(
+        kroll.files,
+        'kroll',
+        krollSignatures,
+        packSizeFor
+      );
 
-      for (const file of mckessonFiles) {
-        // Pass the SHARED signature set so duplicates across files are caught
-        const { data, preview } = await parseSingleFileWithPreview(file, 'mckesson', mckessonSignatures, packSizeFor);
+      const combinedDateRange = combinedRange([...mckessonPreviews, ...krollPreviews]);
 
-        for (const [din, itemData] of data) {
-          const existing = allMckessonData.get(din);
-          if (existing) {
-            existing.purchased += itemData.purchased;
-            existing.dispensed += itemData.dispensed;
-            existing.transactions = [...(existing.transactions || []), ...(itemData.transactions || [])];
-          } else {
-            allMckessonData.set(din, itemData);
-          }
-        }
-
-        if (preview) mckessonPreviews.push(preview);
-      }
-
-      // Process all Kroll files
-      const allKrollData = new Map<string, any>();
-      const krollPreviews: FilePreview[] = [];
-
-      for (const file of krollFiles) {
-        // Pass the SHARED signature set so duplicates across files are caught
-        const { data, preview } = await parseSingleFileWithPreview(file, 'kroll', krollSignatures, packSizeFor);
-
-        for (const [din, itemData] of data) {
-          const existing = allKrollData.get(din);
-          if (existing) {
-            existing.purchased += itemData.purchased;
-            existing.dispensed += itemData.dispensed;
-            existing.transactions = [...(existing.transactions || []), ...(itemData.transactions || [])];
-          } else {
-            allKrollData.set(din, itemData);
-          }
-        }
-
-        if (preview) krollPreviews.push(preview);
-      }
-
-      // Calculate combined date range
-      const combinedDateRange: { start: Date | null; end: Date | null } = { start: null, end: null };
-
-      for (const preview of [...mckessonPreviews, ...krollPreviews]) {
-        if (preview.dateRange?.start && (!combinedDateRange.start || preview.dateRange.start < combinedDateRange.start)) {
-          combinedDateRange.start = preview.dateRange.start;
-        }
-        if (preview.dateRange?.end && (!combinedDateRange.end || preview.dateRange.end > combinedDateRange.end)) {
-          combinedDateRange.end = preview.dateRange.end;
-        }
-      }
-
-      // Deduplicate if we have existing data
-      let deduplicatedMckesson: Map<string, any>;
-      let deduplicatedKroll: Map<string, any>;
+      // Rows that overlap a range already imported are dropped, so re-uploading a
+      // superset of an earlier file does not double-count.
+      let mckessonData = allMckessonData;
+      let krollData = allKrollData;
       let skippedCount = 0;
 
       if (existingMckessonData.size > 0 || existingKrollData.size > 0) {
-        const originalMckessonSize = allMckessonData.size;
-        const originalKrollSize = allKrollData.size;
+        mckessonData = deduplicateDinData(existingMckessonData, allMckessonData, existingDateRange);
+        krollData = deduplicateDinData(existingKrollData, allKrollData, existingDateRange);
+        skippedCount =
+          allMckessonData.size - mckessonData.size + (allKrollData.size - krollData.size);
 
-        deduplicatedMckesson = deduplicateDinData(existingMckessonData, allMckessonData, existingDateRange);
-        deduplicatedKroll = deduplicateDinData(existingKrollData, allKrollData, existingDateRange);
-
-        skippedCount = (originalMckessonSize - deduplicatedMckesson.size) + (originalKrollSize - deduplicatedKroll.size);
         setSkippedDuplicates(skippedCount);
-
         if (skippedCount > 0) {
           toast.success(`Skipped ${skippedCount} duplicate transactions from overlapping date ranges`);
         }
-      } else {
-        // No existing data, use the parsed data as-is
-        deduplicatedMckesson = allMckessonData;
-        deduplicatedKroll = allKrollData;
       }
 
-      // Store the new data as existing for future uploads
-      setExistingMckessonData(deduplicatedMckesson);
-      setExistingKrollData(deduplicatedKroll);
+      setExistingMckessonData(mckessonData);
+      setExistingKrollData(krollData);
       setExistingDateRange(combinedDateRange);
-
-      // Set previews and show modal
       setFilePreviews({ mckesson: mckessonPreviews, kroll: krollPreviews });
       setShowPreviewModal(true);
 
-      // Store the parsed data for later use
-      const merged = mergeDinData(deduplicatedMckesson, deduplicatedKroll);
-
+      const merged = mergeDinData(mckessonData, krollData);
       if (merged.size === 0) {
         toast.error('No valid DIN data found in the uploaded files after deduplication');
-        setParsing(false);
         setShowPreviewModal(false);
         return;
       }
 
-      // Get opening balances based on selected mode
-      const openingBalances = new Map<string, number>();
-
-      if (startFromPreviousMode === 'database') {
-        const previousCompletedCycle = cycles?.find(c => c.status === 'completed');
-        if (previousCompletedCycle) {
-          const { data: previousItems } = await supabase
-            .from('reconciliation_items')
-            .select('din, actual_count')
-            .eq('cycle_id', previousCompletedCycle.id)
-            .not('actual_count', 'is', null);
-
-          if (previousItems) {
-            for (const item of previousItems) {
-              if (item.actual_count !== null) {
-                openingBalances.set(item.din, item.actual_count);
-              }
-            }
-          }
-        }
-      } else if (startFromPreviousMode === 'file') {
-        // Try to match DINs with different normalization
-        for (const [savedDin, count] of savedCounts) {
-          // Try exact match first
-          if (merged.has(savedDin)) {
-            openingBalances.set(savedDin, count);
-          } else {
-            // Try with leading zeros variations
-            for (const [mergedDin] of merged.keys()) {
-              // Remove leading zeros for comparison
-              const savedDinNoLeading = savedDin.replace(/^0+/, '');
-              const mergedDinNoLeading = mergedDin.replace(/^0+/, '');
-
-              if (savedDinNoLeading === mergedDinNoLeading) {
-                openingBalances.set(mergedDin, count);
-                break;
-              }
-            }
-          }
-        }
-      }
-      // 'zero' mode uses 0 by default
+      const openingBalances = await resolveOpeningBalances(startFromPreviousMode, cycles ?? [], savedCounts, merged);
 
       const items: ReconciliationItemDraft[] = [];
       for (const [din, data] of merged) {
         const drug = drugMap.get(din);
-        const openingBalance = openingBalances.get(din) ?? 0;
+        const reference = getDinReferenceEntry(din);
 
         // Description and schedule come from the drug record, then the CDSA/DPD
         // reference, then the text inside the uploaded file.
-        const reference = getDinReferenceEntry(din);
         const drugDescription =
           drug?.description && !drug.description.startsWith('Imported DIN')
             ? drug.description
             : reference
               ? referenceLabel(reference) || undefined
               : undefined;
-        const description = drugDescription ?? (data.description as string | undefined) ?? 'Unknown drug';
-        const schedule =
-          drug?.schedule && drug.schedule !== 'Verify' ? drug.schedule : reference?.schedule ?? 'Verify';
 
         items.push({
           din,
           drug_id: drug?.id ?? null,
-          description: description,
-          schedule: schedule,
-          opening_balance: openingBalance,
+          description: drugDescription ?? data.description ?? 'Unknown drug',
+          schedule: drug?.schedule && drug.schedule !== 'Verify' ? drug.schedule : reference?.schedule ?? 'Verify',
+          opening_balance: openingBalances.get(din) ?? 0,
           purchased_count: data.purchased,
           dispensed_count: data.dispensed,
           actual_count: null,
           flag: 'Pending count',
-          locations: DEFAULT_COUNT_LOCATIONS.map((l) => ({ ...l })),
+          locations: DEFAULT_COUNT_LOCATIONS.map((location) => ({ ...location })),
         });
       }
 
       items.sort((a, b) => a.din.localeCompare(b.din));
       setDraftItems(items);
 
-      const message = skippedCount > 0
-        ? `${items.length} DINs imported from ${mckessonFiles.length} McKesson and ${krollFiles.length} Kroll file(s) (${skippedCount} duplicate transactions skipped). Confirm the preview to start the cycle.`
-        : `${items.length} DINs imported from ${mckessonFiles.length} McKesson and ${krollFiles.length} Kroll file(s). Confirm the preview to start the cycle.`;
-      toast.success(message);
+      const skippedMsg = skippedCount > 0 ? ` (${skippedCount} duplicate transactions skipped)` : '';
+      toast.success(
+        `${items.length} DINs imported from ${mckesson.files.length} McKesson and ${kroll.files.length} Kroll file(s)${skippedMsg}. Confirm the preview to start the cycle.`
+      );
     } catch (err) {
-      console.error('Error processing files:', err);
-      const message = err instanceof Error ? err.message : 'Failed to parse files';
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : 'Failed to parse files');
+    } finally {
+      setParsing(false);
     }
-    setParsing(false);
   };
-
-  const computeExpected = (item: { opening_balance: number; purchased_count: number; dispensed_count: number }): number =>
-    item.opening_balance + item.purchased_count - item.dispensed_count;
 
   const handleConfirmPreview = () => {
     if (draftItems.length === 0) {
@@ -672,126 +463,52 @@ export default function Reconciliation() {
       setShowPreviewModal(false);
       return;
     }
+
     setShowPreviewModal(false);
     setView('table');
     const skippedMsg = skippedDuplicates > 0 ? ` (${skippedDuplicates} duplicates skipped)` : '';
     toast.success(`Starting reconciliation with ${draftItems.length} items${skippedMsg}`);
   };
 
-  const handleClearAndReset = () => {
+  const resetImport = () => {
     setExistingMckessonData(new Map());
     setExistingKrollData(new Map());
     setExistingDateRange(null);
     setSkippedDuplicates(0);
     setDraftItems([]);
-    setMckessonFiles([]);
-    setKrollFiles([]);
+    mckesson.clear();
+    kroll.clear();
     setFilePreviews({ mckesson: [], kroll: [] });
-    setSavedCountFile(null);
-    setSavedCounts(new Map());
+    handleSavedCountClear();
     setStartFromPreviousMode('zero');
+  };
+
+  const handleClearAndReset = () => {
+    resetImport();
     toast.success('Cleared all data. Ready for fresh upload.');
   };
 
-  const handleActualCountChange = (index: number, value: string) => {
-    setDraftItems((prev) => {
-      const next = [...prev];
-      const item = { ...next[index] };
-      const numValue = value === '' ? null : parseInt(value);
-      if (numValue !== null && (isNaN(numValue) || numValue < 0)) return prev;
-      item.actual_count = numValue;
-      item.flag = computeFlag(numValue, computeExpected(item), item.schedule);
-      next[index] = item;
-      addToHistory(next);
-      return next;
-    });
-  };
-
-  const handleNoteChange = (index: number, value: string) => {
-    setDraftItems((prev) => {
-      const next = [...prev];
-      const item = { ...next[index] };
-      item.note = value;
-      next[index] = item;
-      addToHistory(next);
-      return next;
-    });
-  };
-
-  const handleOpeningEdit = (index: number, value: string) => {
-    const numValue = value === '' ? 0 : parseInt(value);
-    if (isNaN(numValue) || numValue < 0) return;
-
-    setDraftItems((prev) => {
-      const next = [...prev];
-      const item = { ...next[index] };
-      item.opening_balance = numValue;
-      item.flag = computeFlag(item.actual_count, computeExpected(item), item.schedule);
-      next[index] = item;
-      addToHistory(next);
-      return next;
-    });
-  };
-
-  const handlePurchasedEdit = (index: number, value: string) => {
-    const numValue = value === '' ? 0 : parseInt(value);
-    if (isNaN(numValue) || numValue < 0) return;
-
-    setDraftItems((prev) => {
-      const next = [...prev];
-      const item = { ...next[index] };
-      item.purchased_count = numValue;
-      item.flag = computeFlag(item.actual_count, computeExpected(item), item.schedule);
-      next[index] = item;
-      addToHistory(next);
-      return next;
-    });
-  };
-
-  const handleDispensedEdit = (index: number, value: string) => {
-    const numValue = value === '' ? 0 : parseInt(value);
-    if (isNaN(numValue) || numValue < 0) return;
-
-    setDraftItems((prev) => {
-      const next = [...prev];
-      const item = { ...next[index] };
-      item.dispensed_count = numValue;
-      item.flag = computeFlag(item.actual_count, computeExpected(item), item.schedule);
-      next[index] = item;
-      addToHistory(next);
-      return next;
-    });
-  };
-
-  const handleEditClick = (index: number, field: 'opening' | 'purchased' | 'dispensed') => {
-    setEditingIndex(index);
-    setEditingField(field);
-  };
-
-  const handleEditBlur = () => {
-    setEditingIndex(null);
-    setEditingField(null);
-  };
+  // ---------------------------------------------------------------- cycles
 
   const handleSavedActualCountBlur = async (itemId: string, value: string) => {
-    const numValue = value === '' ? null : parseInt(value);
-    if (numValue !== null && (isNaN(numValue) || numValue < 0)) return;
+    const parsed = value === '' ? null : parseInt(value, 10);
+    if (parsed !== null && (isNaN(parsed) || parsed < 0)) return;
+
     try {
-      await updateMutation.mutateAsync({ itemId, actualCount: numValue });
+      await updateMutation.mutateAsync({ itemId, actualCount: parsed });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update';
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : 'Failed to update');
     }
   };
 
   const handleSavedOpeningBlur = async (itemId: string, value: string) => {
-    const numValue = value === '' ? 0 : parseInt(value);
-    if (isNaN(numValue) || numValue < 0) return;
+    const parsed = value === '' ? 0 : parseInt(value, 10);
+    if (isNaN(parsed) || parsed < 0) return;
+
     try {
-      await openingMutation.mutateAsync({ itemId, openingBalance: numValue });
+      await openingMutation.mutateAsync({ itemId, openingBalance: parsed });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update opening count';
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : 'Failed to update opening count');
     }
   };
 
@@ -802,58 +519,59 @@ export default function Reconciliation() {
     }
 
     try {
-      const result = await createMutation.mutateAsync({
-        formData: cycleForm,
-        items: draftItems,
-      });
+      const result = await createMutation.mutateAsync({ formData: cycleForm, items: draftItems });
       toast.success('Reconciliation cycle saved');
       setActiveCycleId(result.cycleId);
       setView('detail');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save cycle';
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : 'Failed to save cycle');
     }
   };
 
   const handleCompleteCycle = async () => {
     if (!activeCycleId) return;
+
     try {
       await completeMutation.mutateAsync({ cycleId: activeCycleId, formData: cycleForm });
       toast.success('Reconciliation cycle completed');
       setView('past');
       setActiveCycleId(null);
-      setDraftItems([]);
-      setMckessonFiles([]);
-      setKrollFiles([]);
-      setCycleForm({ start_date: '', end_date: '', performed_by: '', verified_by: '', notes: '', checklist: { ...EMPTY_CHECKLIST } });
+      resetImport();
+      setCycleForm(EMPTY_CYCLE_FORM);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to complete cycle';
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : 'Failed to complete cycle');
     }
   };
 
   const handleDeleteCycle = async () => {
     if (!deleteTarget) return;
+
     try {
       await deleteMutation.mutateAsync(deleteTarget);
       toast.success('Cycle deleted');
       setDeleteTarget(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete cycle';
-      toast.error(message);
+      toast.error(err instanceof Error ? err.message : 'Failed to delete cycle');
     }
   };
 
-  // =================== RENDER ===================
+  const startNewCycle = () => {
+    resetImport();
+    setView('landing');
+  };
+
+  // ---------------------------------------------------------------- render
 
   if (view === 'landing') {
+    const zone = (name: Zone) => (name === 'mckesson' ? mckesson : kroll);
+
     return (
       <>
         <LandingView
-          mckessonFiles={mckessonFiles}
-          krollFiles={krollFiles}
-          mckessonDragOver={mckessonDragOver}
-          krollDragOver={krollDragOver}
+          mckessonFiles={mckesson.files}
+          krollFiles={kroll.files}
+          mckessonDragOver={mckesson.dragOver}
+          krollDragOver={kroll.dragOver}
           parsing={parsing}
           cycles={cycles ?? []}
           cyclesLoading={cyclesLoading}
@@ -863,32 +581,29 @@ export default function Reconciliation() {
           savedCountFile={savedCountFile}
           savedCountDragOver={savedCountDragOver}
           hasExistingData={existingMckessonData.size > 0 || existingKrollData.size > 0}
-          onDrop={handleFileDrop}
-          onDragOver={(e, zone) => {
-            e.preventDefault();
-            if (zone === 'mckesson') setMckessonDragOver(true);
-            else setKrollDragOver(true);
+          onDrop={(event, name) => zone(name).handleDrop(event)}
+          onDragOver={(event, name) => {
+            event.preventDefault();
+            zone(name).setDragOver(true);
           }}
-          onDragLeave={(zone) => {
-            if (zone === 'mckesson') setMckessonDragOver(false);
-            else setKrollDragOver(false);
-          }}
-          onFileSelect={handleFileSelect}
-          onRemoveFile={handleRemoveFile}
-          onClearAllFiles={handleClearAllFiles}
+          onDragLeave={(name) => zone(name).setDragOver(false)}
+          onFileSelect={(event, name) => zone(name).handleSelect(event)}
+          onRemoveFile={(index, name) => zone(name).remove(index)}
+          onClearAllFiles={(name) => zone(name).clear()}
           onSavedCountDrop={handleSavedCountDrop}
-          onSavedCountDragOver={(e) => {
-            e.preventDefault();
+          onSavedCountDragOver={(event) => {
+            event.preventDefault();
             setSavedCountDragOver(true);
           }}
           onSavedCountDragLeave={() => setSavedCountDragOver(false)}
           onSavedCountSelect={handleSavedCountSelect}
-          onParseSavedCount={handleParseSavedCountFile}
+          onSavedCountClear={handleSavedCountClear}
           onProcess={handleProcessFiles}
           onViewPast={() => setView('past')}
           onClearAll={handleClearAndReset}
           onStartFromPreviousModeChange={setStartFromPreviousMode}
         />
+
         {showPreviewModal && (
           <FilePreviewModal
             previews={filePreviews}
@@ -905,86 +620,69 @@ export default function Reconciliation() {
   }
 
   if (view === 'table') {
-    const allSelected = filteredItems.length > 0 && filteredItems.every(item => item.selected);
-    const selectedCount = draftItems.filter(item => item.selected).length;
-
     return (
       <>
-      <TableView
-        items={draftItems}
-        filteredItems={filteredItems}
-        cycleForm={cycleForm}
-        onFormChange={setCycleForm}
-        onActualCountChange={handleActualCountChange}
-        onNoteChange={handleNoteChange}
-        onSave={handleSaveCycle}
-        onBack={() => setView('landing')}
-        saving={createMutation.isPending}
-        onSearchChange={setSearchQuery}
-        onToggleBulkEdit={() => setBulkEditMode(!bulkEditMode)}
-        bulkEditMode={bulkEditMode}
-        onToggleSelectAll={toggleSelectAll}
-        allSelected={allSelected}
-        selectedCount={selectedCount}
-        onToggleItemSelection={toggleItemSelection}
-        onBulkEdit={handleBulkEdit}
-        onUndo={undo}
-        onRedo={redo}
-        canUndo={historyIndex > 0}
-        canRedo={historyIndex < history.length - 1}
-        onVerifyItem={handleVerifyItem}
-        verifyModalOpen={verifyModalOpen}
-        onCloseVerifyModal={() => {
-          setVerifyModalOpen(false);
-          setSelectedItemForVerify(null);
-          setVerifyNote('');
-        }}
-        verifyNote={verifyNote}
-        onVerifyNoteChange={setVerifyNote}
-        onSaveVerifyNote={saveVerifyNote}
-        searchQuery={searchQuery}
-        onOpenLocations={(din: string) => {
-          const idx = draftItems.findIndex((i) => i.din === din);
-          setLocationEditIndex(idx >= 0 ? idx : null);
-        }}
-        editingIndex={editingIndex}
-        editingField={editingField}
-        onEditClick={handleEditClick}
-        onOpeningEdit={handleOpeningEdit}
-        onPurchasedEdit={handlePurchasedEdit}
-        onDispensedEdit={handleDispensedEdit}
-        onEditBlur={handleEditBlur}
-      />
-      {locationEditIndex !== null && draftItems[locationEditIndex] && (
-        <CountLocationsModal
-          item={draftItems[locationEditIndex]}
-          onClose={() => setLocationEditIndex(null)}
-          onSave={(locations, total) => {
-            const idx = locationEditIndex;
-            setDraftItems((prev) => {
-              const next = [...prev];
-              const item = { ...next[idx] };
-              item.locations = locations;
-              item.actual_count = total;
-              item.flag = computeFlag(total, computeExpected(item), item.schedule);
-              next[idx] = item;
-              addToHistory(next);
-              return next;
-            });
-            setLocationEditIndex(null);
-            toast.success('Location counts applied');
+        <TableView
+          items={draftItems}
+          filteredItems={filteredItems}
+          cycleForm={cycleForm}
+          onFormChange={setCycleForm}
+          onActualCountChange={handleActualCountChange}
+          onNoteChange={handleNoteChange}
+          onSave={handleSaveCycle}
+          onBack={() => setView('landing')}
+          saving={createMutation.isPending}
+          onSearchChange={setSearchQuery}
+          onToggleBulkEdit={() => setBulkEditMode((open) => !open)}
+          bulkEditMode={bulkEditMode}
+          onToggleSelectAll={toggleSelectAll}
+          allSelected={filteredItems.length > 0 && filteredItems.every((item) => item.selected)}
+          selectedCount={draftItems.filter((item) => item.selected).length}
+          onToggleItemSelection={toggleItemSelection}
+          onBulkEdit={handleBulkEdit}
+          onUndo={undo}
+          onRedo={redo}
+          canUndo={historyIndex > 0}
+          canRedo={historyIndex < history.length - 1}
+          onVerifyItem={handleVerifyItem}
+          verifyModalOpen={verifyModalOpen}
+          onCloseVerifyModal={() => {
+            setVerifyModalOpen(false);
+            setSelectedItemForVerify(null);
+            setVerifyNote('');
           }}
+          verifyNote={verifyNote}
+          onVerifyNoteChange={setVerifyNote}
+          onSaveVerifyNote={saveVerifyNote}
+          searchQuery={searchQuery}
+          onOpenLocations={(din) => {
+            const index = draftItems.findIndex((item) => item.din === din);
+            setLocationEditIndex(index >= 0 ? index : null);
+          }}
+          editingIndex={editingIndex}
+          editingField={editingField}
+          onEditClick={handleEditClick}
+          onOpeningEdit={(index, value) => handleNumberEdit(index, 'opening_balance', value)}
+          onPurchasedEdit={(index, value) => handleNumberEdit(index, 'purchased_count', value)}
+          onDispensedEdit={(index, value) => handleNumberEdit(index, 'dispensed_count', value)}
+          onEditBlur={handleEditBlur}
         />
-      )}
+
+        {locationEditIndex !== null && draftItems[locationEditIndex] && (
+          <CountLocationsModal
+            item={draftItems[locationEditIndex]}
+            onClose={() => setLocationEditIndex(null)}
+            onSave={(locations, total) => applyLocationCounts(locationEditIndex, locations, total)}
+          />
+        )}
       </>
     );
   }
 
   if (view === 'detail' && activeCycleId) {
-    const items = activeCycleItems ?? [];
     return (
       <DetailView
-        items={items}
+        items={activeCycleItems ?? []}
         onActualCountBlur={handleSavedActualCountBlur}
         onOpeningBlur={handleSavedOpeningBlur}
         onComplete={handleCompleteCycle}
@@ -1005,15 +703,10 @@ export default function Reconciliation() {
             setActiveCycleId(id);
             setView('detail');
           }}
-          onNewCycle={() => {
-            setDraftItems([]);
-            setMckessonFiles([]);
-            setKrollFiles([]);
-            setFilePreviews({ mckesson: [], kroll: [] });
-            setView('landing');
-          }}
-          onDeleteCycle={(id) => setDeleteTarget(id)}
+          onNewCycle={startNewCycle}
+          onDeleteCycle={setDeleteTarget}
         />
+
         {deleteTarget && (
           <DeleteDialog
             onCancel={() => setDeleteTarget(null)}
@@ -1026,4 +719,90 @@ export default function Reconciliation() {
   }
 
   return null;
+}
+
+// ------------------------------------------------------------------ helpers
+
+/** Parses every file in one zone and merges the results into a single DIN map. */
+async function parseZone(
+  files: File[],
+  source: 'mckesson' | 'kroll',
+  seenSignatures: Set<string>,
+  packSizeFor: (din: string) => number | null
+): Promise<{ data: Map<string, ParsedDinData>; previews: FilePreview[] }> {
+  const data = new Map<string, ParsedDinData>();
+  const previews: FilePreview[] = [];
+
+  for (const file of files) {
+    const parsed = await parseSingleFileWithPreview(file, source, seenSignatures, packSizeFor);
+
+    for (const [din, incoming] of parsed.data) {
+      const existing = data.get(din);
+      if (!existing) {
+        data.set(din, incoming);
+        continue;
+      }
+      existing.purchased += incoming.purchased;
+      existing.dispensed += incoming.dispensed;
+      existing.transactions = [...(existing.transactions ?? []), ...(incoming.transactions ?? [])];
+    }
+
+    previews.push(parsed.preview);
+  }
+
+  return { data, previews };
+}
+
+/** The widest date range covered by a set of file previews. */
+function combinedRange(previews: FilePreview[]): { start: Date | null; end: Date | null } {
+  const range: { start: Date | null; end: Date | null } = { start: null, end: null };
+
+  for (const preview of previews) {
+    const { start, end } = preview.dateRange ?? { start: null, end: null };
+    if (start && (!range.start || start < range.start)) range.start = start;
+    if (end && (!range.end || end > range.end)) range.end = end;
+  }
+
+  return range;
+}
+
+/** Opening balances for the merged DINs, based on the chosen starting-count mode. */
+async function resolveOpeningBalances(
+  mode: 'database' | 'file' | 'zero',
+  cycles: Array<{ id: string; status: string }>,
+  savedCounts: Map<string, number>,
+  merged: Map<string, { purchased: number; dispensed: number }>
+): Promise<Map<string, number>> {
+  const balances = new Map<string, number>();
+
+  if (mode === 'database') {
+    const previousCycle = cycles.find((cycle) => cycle.status === 'completed');
+    if (!previousCycle) return balances;
+
+    const { data } = await supabase
+      .from('reconciliation_items')
+      .select('din, actual_count')
+      .eq('cycle_id', previousCycle.id)
+      .not('actual_count', 'is', null);
+
+    for (const item of data ?? []) {
+      if (item.actual_count !== null) balances.set(item.din, item.actual_count);
+    }
+    return balances;
+  }
+
+  if (mode === 'file') {
+    const mergedDins = [...merged.keys()];
+    for (const [savedDin, count] of savedCounts) {
+      if (merged.has(savedDin)) {
+        balances.set(savedDin, count);
+        continue;
+      }
+      // The file and the export often disagree on leading zeros.
+      const match = mergedDins.find((din) => isSameDin(din, savedDin));
+      if (match) balances.set(match, count);
+    }
+  }
+
+  return balances;
 }

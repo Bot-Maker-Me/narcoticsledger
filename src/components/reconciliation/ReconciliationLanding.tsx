@@ -1,4 +1,4 @@
-import type { DragEvent } from 'react';
+import type { ChangeEvent, DragEvent } from 'react';
 import {
   Scale,
   Upload,
@@ -10,7 +10,7 @@ import {
   History,
 } from 'lucide-react';
 import SectionMarker from '@/components/SectionMarker';
-import { DropZone, MultiFileDropZone } from '@/components/reconciliation/FileDropZones';
+import DropZone from '@/components/ui/DropZone';
 
 export interface LandingViewProps {
   mckessonFiles: File[];
@@ -29,14 +29,14 @@ export interface LandingViewProps {
   onDrop: (e: DragEvent<HTMLDivElement>, zone: 'mckesson' | 'kroll') => void;
   onDragOver: (e: DragEvent<HTMLDivElement>, zone: 'mckesson' | 'kroll') => void;
   onDragLeave: (zone: 'mckesson' | 'kroll') => void;
-  onFileSelect: (e: React.ChangeEvent<HTMLInputElement>, zone: 'mckesson' | 'kroll') => void;
+  onFileSelect: (e: ChangeEvent<HTMLInputElement>, zone: 'mckesson' | 'kroll') => void;
   onRemoveFile: (index: number, zone: 'mckesson' | 'kroll') => void;
   onClearAllFiles: (zone: 'mckesson' | 'kroll') => void;
   onSavedCountDrop: (e: DragEvent<HTMLDivElement>) => void;
   onSavedCountDragOver: (e: DragEvent<HTMLDivElement>) => void;
   onSavedCountDragLeave: () => void;
-  onSavedCountSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onParseSavedCount: () => void;
+  onSavedCountSelect: (e: ChangeEvent<HTMLInputElement>) => void;
+  onSavedCountClear: () => void;
   onProcess: () => void;
   onViewPast: () => void;
   onClearAll: () => void;
@@ -51,7 +51,7 @@ export function LandingView(props: LandingViewProps) {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <SectionMarker index="01" label="Reconciliation" />
+          <SectionMarker label="Reconciliation" />
           <h1 className="mt-4 font-display text-3xl text-neutral-900">Reconciliation</h1>
           <p className="mt-1 text-sm text-neutral-500">
             Import pharmacy exports to start a reconciliation cycle
@@ -81,18 +81,20 @@ export function LandingView(props: LandingViewProps) {
       </div>
 
       {props.hasExistingData && (
-        <div className="mb-6 card p-4 bg-primary-50 border-primary-200">
+        <div className="mb-6 card border-primary-200 bg-primary-50 p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <AlertTriangle className="h-5 w-5 text-primary-600" />
               <div>
                 <p className="text-sm font-medium text-primary-900">Existing data detected</p>
-                <p className="text-xs text-primary-700">New uploads will be deduplicated against existing data to prevent duplicates.</p>
+                <p className="text-xs text-primary-700">
+                  New uploads will be deduplicated against existing data to prevent duplicates.
+                </p>
               </div>
             </div>
             <button
               onClick={props.onClearAll}
-              className="text-sm text-primary-700 hover:text-primary-900 font-medium"
+              className="text-sm font-medium text-primary-700 hover:text-primary-900"
             >
               Clear all data
             </button>
@@ -124,7 +126,7 @@ export function LandingView(props: LandingViewProps) {
       <div className="mb-6 card p-6">
         <h3 className="mb-4 text-lg font-semibold text-neutral-900">Starting Count Option</h3>
         <div className="space-y-3">
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="flex cursor-pointer items-center gap-2">
             <input
               type="radio"
               name="startOption"
@@ -134,7 +136,7 @@ export function LandingView(props: LandingViewProps) {
             />
             <span className="text-sm text-neutral-700">Start from zero</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="flex cursor-pointer items-center gap-2">
             <input
               type="radio"
               name="startOption"
@@ -144,7 +146,7 @@ export function LandingView(props: LandingViewProps) {
             />
             <span className="text-sm text-neutral-700">Start from previous saved counts (from database)</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className="flex cursor-pointer items-center gap-2">
             <input
               type="radio"
               name="startOption"
@@ -162,16 +164,16 @@ export function LandingView(props: LandingViewProps) {
               label="Saved Count File"
               description="Upload a file with DIN and actual count columns (.csv, .xlsx, .xls)"
               icon={FileSpreadsheet}
-              file={props.savedCountFile}
+              files={props.savedCountFile ? [props.savedCountFile] : []}
+              multiple={false}
               dragOver={props.savedCountDragOver}
-              accept=".csv,.xlsx,.xls"
               onDrop={props.onSavedCountDrop}
               onDragOver={props.onSavedCountDragOver}
               onDragLeave={props.onSavedCountDragLeave}
               onFileSelect={props.onSavedCountSelect}
-              onClear={() => {}}
+              onRemoveFile={props.onSavedCountClear}
+              onClearAll={props.onSavedCountClear}
             />
-            {/* Parse automatically when file is selected - no manual button needed */}
           </div>
         )}
       </div>
@@ -179,13 +181,12 @@ export function LandingView(props: LandingViewProps) {
       <div className="mb-6 card p-6">
         <h3 className="mb-4 text-lg font-semibold text-neutral-900">File Uploads</h3>
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <MultiFileDropZone
+          <DropZone
             label="McKesson Exports"
             description="Upload one or more McKesson purchase reports (.csv, .xlsx, .xls)"
             icon={FileSpreadsheet}
             files={props.mckessonFiles}
             dragOver={props.mckessonDragOver}
-            accept=".csv,.xlsx,.xls"
             onDrop={(e) => props.onDrop(e, 'mckesson')}
             onDragOver={(e) => props.onDragOver(e, 'mckesson')}
             onDragLeave={() => props.onDragLeave('mckesson')}
@@ -193,13 +194,12 @@ export function LandingView(props: LandingViewProps) {
             onRemoveFile={(index) => props.onRemoveFile(index, 'mckesson')}
             onClearAll={() => props.onClearAllFiles('mckesson')}
           />
-          <MultiFileDropZone
+          <DropZone
             label="Kroll Exports"
             description="Upload one or more Kroll dispensing reports (.csv, .xlsx, .xls)"
             icon={FileText}
             files={props.krollFiles}
             dragOver={props.krollDragOver}
-            accept=".csv,.xlsx,.xls"
             onDrop={(e) => props.onDrop(e, 'kroll')}
             onDragOver={(e) => props.onDragOver(e, 'kroll')}
             onDragLeave={() => props.onDragLeave('kroll')}

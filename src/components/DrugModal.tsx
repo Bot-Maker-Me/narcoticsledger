@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useCreateDrug, useUpdateDrug, useCheckDinUnique } from '@/hooks/useDrugs';
 import { useDinReferenceEntry } from '@/hooks/useDinReference';
 import { referenceLabel } from '@/lib/dinReference';
+import { digitsOf } from '@/lib/din';
 import { SCHEDULES, type Drug, type DrugFormData, type DrugSchedule } from '@/types/drug';
 
 interface DrugModalProps {
@@ -117,8 +118,7 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
   );
 
   const handleDinChange = (value: string) => {
-    const din = value.replace(/\D/g, '');
-    setForm((current) => ({ ...current, din }));
+    setForm((current) => ({ ...current, din: digitsOf(value) }));
   };
 
   // Fill the product details once the reference lookup resolves.

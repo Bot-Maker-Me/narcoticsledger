@@ -1,6 +1,6 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { fetchStockByDrugId } from '@/lib/stockLevels';
+import { stockLevelsQuery } from '@/lib/stockLevels';
 import type { Prescription, PrescriptionFormData, PrescriptionWithDrug } from '@/types/prescription';
 
 /** Prescription images live in a private bucket, so links are signed on read. */
@@ -13,7 +13,7 @@ async function signImagePaths(paths: string[]): Promise<Map<string, string>> {
     .createSignedUrls(paths, 60 * 60);
 
   if (error) {
-    console.error('Failed to sign prescription images:', error);
+    console.error('[prescriptions] failed to sign images:', error);
     return map;
   }
 
@@ -23,7 +23,7 @@ async function signImagePaths(paths: string[]): Promise<Map<string, string>> {
   return map;
 }
 
-async function fetchPrescriptions(): Promise<PrescriptionWithDrug[]> {
+async function fetchPrescriptions(queryClient: QueryClient): Promise<PrescriptionWithDrug[]> {
   const { data, error } = await supabase
     .from('prescriptions')
     .select('*, drugs!inner(description, din)')
@@ -31,12 +31,8 @@ async function fetchPrescriptions(): Promise<PrescriptionWithDrug[]> {
 
   if (error) throw error;
 
-  let stockMap = new Map<string, number>();
-  try {
-    stockMap = await fetchStockByDrugId();
-  } catch {
-    stockMap = new Map();
-  }
+  // Shared with useDrugs, so the stock view is only requested once per page load.
+  const stockMap = await queryClient.fetchQuery(stockLevelsQuery);
 
   const imagePaths = (data ?? [])
     .map((row) => row.image_url)
@@ -44,10 +40,7 @@ async function fetchPrescriptions(): Promise<PrescriptionWithDrug[]> {
   const signedImages = await signImagePaths(imagePaths);
 
   return (data ?? []).map((row) => {
-    const drug = row.drugs as unknown as {
-      description: string;
-      din: string;
-    };
+    const drug = row.drugs as unknown as { description: string; din: string };
     return {
       id: row.id,
       user_id: row.user_id,
@@ -90,10 +83,7 @@ async function createPrescription(formData: PrescriptionFormData): Promise<Presc
 }
 
 async function cancelPrescription(id: string): Promise<void> {
-  const { error } = await supabase
-    .from('prescriptions')
-    .update({ status: 'cancelled' })
-    .eq('id', id);
+  const { error } = await supabase.from('prescriptions').update({ status: 'cancelled' }).eq('id', id);
   if (error) throw error;
 }
 
@@ -123,19 +113,17 @@ async function uploadPrescriptionImage(file: File, userId: string): Promise<stri
   const fileExt = file.name.split('.').pop();
   const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from('prescriptions')
-    .upload(fileName, file);
-
-  if (uploadError) throw uploadError;
+  const { error } = await supabase.storage.from('prescriptions').upload(fileName, file);
+  if (error) throw error;
 
   return fileName;
 }
 
 export function usePrescriptions() {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ['prescriptions'],
-    queryFn: fetchPrescriptions,
+    queryFn: () => fetchPrescriptions(queryClient),
   });
 }
 
@@ -143,9 +131,7 @@ export function useCreatePrescription() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: createPrescription,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['prescriptions'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['prescriptions'] }),
   });
 }
 
@@ -153,9 +139,7 @@ export function useCancelPrescription() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: cancelPrescription,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['prescriptions'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['prescriptions'] }),
   });
 }
 
@@ -163,9 +147,7 @@ export function useDeletePrescription() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deletePrescription,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['prescriptions'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['prescriptions'] }),
   });
 }
 

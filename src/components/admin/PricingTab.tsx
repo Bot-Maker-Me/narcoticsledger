@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { DollarSign, Save, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useSystemSettings, useUpdatePricing } from '@/hooks/useAdmin';
-import { formatPrice } from '@/types/admin';
+import { formatPrice } from '@/lib/format';
 
 export function PricingTab() {
   const { data: settings, isLoading } = useSystemSettings();

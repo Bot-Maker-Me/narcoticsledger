@@ -240,20 +240,6 @@ export function useDeleteCycle() {
   });
 }
 
-export function useApplySuggestedAdjustments() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (items: ReconciliationItem[]) => {
-      // Disabled automatic adjustments to prevent saving previous counts
-      // Users must manually apply adjustments if needed
-      return 0;
-    },
-    onSuccess: () => {
-      // No invalidation needed since we're not applying adjustments
-    },
-  });
-}
-
 export function computeFlag(
   actualCount: number | null,
   expected: number,

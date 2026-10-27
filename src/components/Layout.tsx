@@ -17,6 +17,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { formatWeekdayLong } from '@/lib/dates';
 import toast from 'react-hot-toast';
 import GlobalDrugSearch from '@/components/GlobalDrugSearch';
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -167,11 +168,7 @@ export default function Layout() {
                 Welcome back, {profile?.pharmacy_name || 'Pharmacist'}
               </p>
               <p className="text-[10px] uppercase tracking-[0.16em] text-neutral-400">
-                {new Date().toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  month: 'long',
-                  day: 'numeric',
-                })}
+                {formatWeekdayLong()}
               </p>
             </div>
           </div>

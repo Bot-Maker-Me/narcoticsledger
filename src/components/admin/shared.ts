@@ -9,11 +9,3 @@ export const subStatusConfig: Record<SubscriptionStatus, { style: string; label:
   revoked: { style: 'bg-error-50 text-error-700', label: 'Revoked' },
   none: { style: 'bg-neutral-100 text-neutral-500', label: 'None' },
 };
-
-export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}

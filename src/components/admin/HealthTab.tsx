@@ -1,6 +1,6 @@
 import { Users, CheckCircle2, Clock, Activity, AlertTriangle, Loader2 } from 'lucide-react';
 import { useSystemHealth, useAuditLogs } from '@/hooks/useAdmin';
-import { formatDate } from '@/components/admin/shared';
+import { formatDate } from '@/lib/dates';
 
 export function HealthTab() {
   const { data: health, isLoading } = useSystemHealth();

@@ -1,10 +1,22 @@
 import { supabase } from '@/lib/supabase';
 
+/**
+ * React Query options for the per-drug stock map.
+ *
+ * The key is nested under `['drugs']` on purpose: every existing
+ * `invalidateQueries({ queryKey: ['drugs'] })` also refreshes the stock, so no mutation
+ * had to change. Both `useDrugs` and `usePrescriptions` read the same entry, which
+ * removes the duplicate request the two hooks used to make on every page load.
+ */
+export const stockLevelsQuery = {
+  queryKey: ['drugs', 'stock'] as const,
+  queryFn: fetchStockByDrugId,
+  staleTime: 30_000,
+};
+
 export async function fetchStockByDrugId(): Promise<Map<string, number>> {
   try {
-    const { data, error } = await supabase
-      .from('drug_stock_levels')
-      .select('id, current_stock');
+    const { data, error } = await supabase.from('drug_stock_levels').select('id, current_stock');
 
     if (error) throw error;
 
@@ -14,8 +26,9 @@ export async function fetchStockByDrugId(): Promise<Map<string, number>> {
     }
     return map;
   } catch (error) {
-    console.error('Failed to fetch stock levels:', error);
-    // Return empty map if view doesn't exist or there's an error
+    console.error('[stock] failed to fetch stock levels:', error);
+    // The view may not exist in a fresh environment; treat stock as unknown rather than
+    // failing the whole drugs query.
     return new Map();
   }
 }

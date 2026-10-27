@@ -4,7 +4,9 @@ import { useMemo } from 'react';
 import { usePrescriptions } from '@/hooks/usePrescriptions';
 import { useReconciliationCycles } from '@/hooks/useReconciliation';
 import { useAuth } from '@/context/AuthContext';
-import { hasAccess, formatPrice } from '@/types/admin';
+import { hasAccess } from '@/lib/access';
+import { formatPrice } from '@/lib/format';
+import { formatDayMonth, formatLongDate } from '@/lib/dates';
 import { useSystemSettings } from '@/hooks/useAdmin';
 import { useAllReconciliationItems } from '@/hooks/useReconciliation';
 import { motion } from 'framer-motion';
@@ -125,12 +127,7 @@ export default function Dashboard() {
               Your trial ends soon
             </p>
             <p className="text-xs text-neutral-500">
-              Trial ends on{' '}
-              {new Date(profile.trial_ends_at!).toLocaleDateString('en-US', {
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-              })}
+              Trial ends on {formatLongDate(profile.trial_ends_at!)}
               {settings && ` · Upgrade to continue for ${formatPrice(settings.subscription_price_cents)}/mo`}
             </p>
           </div>
@@ -175,12 +172,7 @@ export default function Dashboard() {
               You're on a free trial
             </p>
             <p className="text-xs text-neutral-500">
-              Trial ends on{' '}
-              {new Date(profile.trial_ends_at).toLocaleDateString('en-US', {
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-              })}
+              Trial ends on {formatLongDate(profile.trial_ends_at)}
               {settings && ` · ${formatPrice(settings.subscription_price_cents)}/mo after`}
             </p>
           </div>
@@ -245,7 +237,7 @@ export default function Dashboard() {
                     <div className="flex-1">
                       <p className="text-sm font-medium text-neutral-800">{activity.message}</p>
                       <p className="text-xs text-neutral-400">
-                        {activity.time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · 
+                        {formatDayMonth(activity.time)} ·{' '}
                         {activity.time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                       </p>
                     </div>

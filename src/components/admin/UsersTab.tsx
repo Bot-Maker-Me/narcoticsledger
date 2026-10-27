@@ -15,7 +15,8 @@ import {
   useRevokeAccess,
 } from '@/hooks/useAdmin';
 import type { AdminUser } from '@/types/admin';
-import { subStatusConfig, formatDate } from '@/components/admin/shared';
+import { subStatusConfig } from '@/components/admin/shared';
+import { formatDate } from '@/lib/dates';
 
 export function UsersTab() {
   const { data: users, isLoading, isError, refetch } = useAdminUsers();

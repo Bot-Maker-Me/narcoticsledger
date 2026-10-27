@@ -86,9 +86,13 @@ export function TableView(props: TableViewProps) {
     toast.success('CSV exported successfully');
   };
 
-  const handleExportPDF = () => {
-    exportToPDF(props.items);
-    toast.success('PDF exported successfully');
+  const handleExportPDF = async () => {
+    try {
+      await exportToPDF(props.items);
+      toast.success('PDF exported successfully');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export PDF');
+    }
   };
 
   return (

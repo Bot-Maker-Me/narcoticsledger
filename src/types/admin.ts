@@ -46,19 +46,3 @@ export interface AuditLog {
   created_at: string;
   performer_email: string | null;
 }
-
-export function hasAccess(profile: Profile | null): boolean {
-  if (!profile) return false;
-  // Admins always have access
-  if (profile.role === 'admin') return true;
-  if (profile.subscription_status === 'active') return true;
-  if (profile.subscription_status === 'trialing') {
-    if (!profile.trial_ends_at) return true;
-    return new Date(profile.trial_ends_at) > new Date();
-  }
-  return false;
-}
-
-export function formatPrice(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}

@@ -1,5 +1,5 @@
 import { Scale, Loader2, Edit3, CheckCircle2, Trash2 } from 'lucide-react';
-import { formatDate } from '@/components/reconciliation/shared';
+import { formatDate } from '@/lib/dates';
 
 export interface PastCyclesViewProps {
   cycles: {

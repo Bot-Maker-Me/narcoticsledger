@@ -12,7 +12,35 @@ Project: **Narcotics Ledger** — a pharmacy controlled-substance inventory, dis
 - **Path alias `@/` → `src/`** (configured in `vite.config.ts`). Use `@/...` imports, not deep relative paths.
 - **Auth context** — `src/context/AuthContext.tsx` (`useAuth()`) is the single source of session, user and profile.
 - **Environment variables** — only `import.meta.env.VITE_*` (e.g. `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`). Never hardcode keys.
-- **Errors** — top-level `ErrorBoundary` (`react-error-boundary`) + `ErrorFallback` in `src/App.tsx`.
+- **Errors** — top-level `ErrorBoundary` (`react-error-boundary`) + `ErrorFallback` in `src/App.tsx`, plus `ConfirmProvider` for confirmations.
+
+## Structure — where does this file go?
+
+| Kind of code | Home |
+| --- | --- |
+| Route component | `src/pages/` (thin: orchestration + layout, no data fetching) |
+| Generic, domain-free UI | `src/components/ui/` (`ConfirmDialog`, `DropZone`, `EmptyState`) |
+| Domain components | `src/components/<domain>/` (`records/`, `admin/`, `reconciliation/`) |
+| Server state / data hooks | `src/hooks/` (`useDrugs.ts`, `useTransactions.ts`, `useFileList.ts` …) |
+| Pure logic & helpers | `src/lib/` — one concern per file |
+| Types only | `src/types/` — **no runtime code in a types file** |
+
+Canonical helpers — **never re-implement these**:
+
+| Concern | Import from |
+| --- | --- |
+| DIN parsing, padding, comparison | `@/lib/din` (`digitsOf`, `normalizeDin`, `padDin`, `isSameDin`, `looksLikeDin`, `isValidDin`) |
+| Display formatting for dates | `@/lib/dates` (`formatDate`, `formatDateTime`, `formatLongDate`, `formatDayMonth`, `formatMonthYear`, `formatWeekdayLong`) |
+| Money / numbers / bytes | `@/lib/format` (`formatPrice`, `formatNumber`, `formatBytes`) |
+| Subscription / trial gating | `@/lib/access` (`hasAccess`) |
+| Ledger calendar days (timezone-safe) | `@/lib/ledgerDate` |
+| Supplier file parsing | `@/lib/fileParser` |
+| CDSA/DPD reference lookups | `@/lib/dinReference` |
+| CSV / PDF export | `@/lib/exportUtils` |
+
+Per-record-kind copy and behaviour (title, icon, parser profile, quantity label, filters)
+lives in one place: `src/components/records/config.ts` (`RECORD_KINDS`). Add a new record
+kind there, not in a page.
 
 ## Library Rules — use this for that
 
@@ -22,18 +50,25 @@ Project: **Narcotics Ledger** — a pharmacy controlled-substance inventory, dis
 | Server data / caching | `@tanstack/react-query` | Wrap Supabase calls in `src/hooks/use*.ts`; key by domain (`['drugs']`, `['transactions']`…) |
 | Database + auth | `@supabase/supabase-js` via `@/lib/supabase` | Query with `.select()/insert()/update()`; throw on `error` so React Query surfaces it |
 | Session/user state | `useAuth()` from `@/context/AuthContext` | Don't read `supabase.auth` directly in pages |
+| Confirmation dialogs | `useConfirm()` from `@/components/ui/ConfirmDialog` | **Never use `window.confirm`** — it ignores the design system |
+| File drop zones | `DropZone` from `@/components/ui/DropZone` | The only drop zone; don't hand-roll another |
+| Drag/drop file state | `useFileList()` from `@/hooks/useFileList` | Shared add/remove/clear + extension validation |
+| Deleting an imported file | `useDeleteImportedFile()` from `@/hooks/useDeleteImportedFile` | Confirm + toast + mutation in one call |
+| Empty / zero-result panels | `EmptyState` from `@/components/ui/EmptyState` | |
 | Icons | `lucide-react` | No other icon set, no inline SVG icons |
 | Toasts | `react-hot-toast` | `toast.success` / `toast.error`; `<Toaster />` is already mounted in `App.tsx` |
 | Animation | `framer-motion` | Prefer the Tailwind animation utilities for simple entrances |
-| Charts | `recharts` | Used on `Dashboard` / `Reports` |
+| Charts | `recharts` | Used on `Dashboard` / `Reports`; pass explicit colours (see below) |
 | CSV / Excel parsing | `papaparse` (CSV) and `xlsx` (XLSX/XLS) | Wrap file parsing in `src/lib/fileParser.ts` |
-| CSV export | Build the CSV string in a `src/lib/*export*` helper | See `exportToCSV` in `src/lib/exportUtils.ts` |
+| CSV export | Build the CSV string in `src/lib/exportUtils.ts` | |
 | PDF export | `jspdf` | See `exportToPDF` in `src/lib/exportUtils.ts` |
-| Date formatting / math | `date-fns` | Ledger day values go through `src/lib/ledgerDate.ts` |
-| Tooltips | `Tooltip` from `@/components/Tooltip` (wraps `@tippyjs/react`) | Don't import tippy directly — the wrapper handles mount/SSR |
-| Error boundaries | `react-error-boundary` | Only at the app root |
+| Date formatting / math | `@/lib/dates` + `@/lib/ledgerDate` | No `date-fns`; the ledger helpers handle the calendar-day problem |
+| Tooltips | `Tooltip` from `@/components/Tooltip` (wraps `@tippyjs/react`) | Don't import tippy directly |
+| Error boundaries | `react-error-boundary` | Root boundary + `Layout`'s boundary only |
 
 Do **not** add a new dependency when an installed library above already covers the need.
+Load heavy, rarely-used libraries (`xlsx`, `jspdf`, `recharts`) with a dynamic `import()`
+or `React.lazy` — never at module top level in an eagerly-loaded file.
 
 ## Design System — "Employee Portal" dark theme
 
@@ -52,7 +87,7 @@ A calm, audit-ready dark healthcare look: deep navy, a single soft-coral accent,
 
 Shared classes in `src/index.css`: `card` (dark glass), `card-cream` (mockups), `btn-primary` (coral, hover lift + glow), `btn-secondary` (ghost outline), `input-field` (cream field with coral focus ring), `field-label` (small uppercase tracked label).
 
-Shared components: `SectionMarker` (`§ 01 · LABEL` with a thin coral rule — used above page/section headings) and `Stamp` (circular coral audit badge).
+Shared components: `SectionMarker` (`§ 01 · LABEL` with a thin coral rule — used above page/section headings; the `index` prop is optional) and `Stamp` (circular coral audit badge).
 
 Rules:
 - The ambient backdrop (navy + grid + film grain + coral/indigo corner glows) is painted once on `body` in `src/index.css`. **Never add an opaque page background to a route wrapper** (use `bg-neutral-50`, `bg-surface` or `bg-ink-*` for panels instead) or the backdrop and glass surfaces stop reading.
@@ -60,20 +95,12 @@ Rules:
 - Use bracketed opacity for non-standard values (`bg-white/[0.06]`). Tailwind silently drops unrecognised utilities such as `bg-white/6`.
 - Recharts: pass explicit colours (`#E85A5A` coral, `#8E9FC4` slate, `#D6A85F` amber, `#7BA88B` sage, `#6B7DA6` blue), tick `fill: '#98A2B8'` and the dark `chartTooltip` style from `Reports.tsx` — recharts' defaults assume a white page.
 
-## Structure & Naming
-
-- Pages → `src/pages/` (`Index`-style default export, named after the feature: `Inventory.tsx`, `Reconciliation.tsx`).
-- Reusable components → `src/components/` (PascalCase file name, default export).
-- Data hooks → `src/hooks/` (`useDrugs.ts`, `useTransactions.ts` …).
-- Pure helpers/types → `src/lib/` and `src/types/`. Keep components free of business logic.
-- When you add a new feature, mount it into the existing routed page in `src/App.tsx` so it is actually reachable.
-- Page headers follow the pattern `SectionMarker` + serif `<h1 className="mt-4 font-display text-3xl text-neutral-900">` + muted subtitle.
-
 ## Styling Rules
 
 - Tailwind classes for all layout/spacing/colour. Use the custom theme tokens (`bg-surface`, `text-neutral-700`, `shadow-card`, `text-primary-500`) instead of raw hex values or arbitrary colours.
 - Reuse the shared classes from `src/index.css`: `btn-primary`, `btn-secondary`, `input-field`, `card`.
-- Build shadcn-style UI primitives as local components in `src/components/`; keep files small and focused, one concern per file.
+- Build shadcn-style UI primitives as local components in `src/components/ui/`; keep files small and focused, one concern per file.
+- Page headers follow the pattern `SectionMarker` + serif `<h1 className="mt-4 font-display text-3xl text-neutral-900">` + muted subtitle.
 
 ## Security & Data Rules
 
@@ -81,8 +108,10 @@ Rules:
 - Never expose service-role keys or secrets in front-end code. Front-end `.env` values must be `VITE_`-prefixed and public-safe (anon key only).
 - Validate at the boundary: sanitise/validate user input before inserting, and always handle the `error` returned by Supabase calls.
 - Avoid `dangerouslySetInnerHTML`; render user content as text.
+- Never commit database dumps or `.env` files (see `.gitignore`).
 
 ## Verification
 
-- Type-check with the project's `typecheck` script before finishing a change.
+- Type-check with `npm run typecheck` and lint with `npm run lint` before finishing a change.
+- Keep the audit-relevant pure logic covered by tests (`npm run test`); `src/lib/__tests__/` holds them.
 - Prefer hot reload for source/style edits; only restart the dev server for process-boundary changes (dependency, env or Vite config edits).

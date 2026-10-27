@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
+import { normalizeDin } from '@/lib/din';
 import { fetchReferenceEntries } from '@/lib/dinReference';
 import type { ParsedDinData } from '@/types/reconciliation';
 
@@ -12,15 +12,6 @@ export interface FilePreview {
   sampleData: Array<Record<string, unknown>>;
   detectedColumns: string[];
   dateRange?: { start: Date | null; end: Date | null };
-}
-
-export interface FileParseResult {
-  mckesson: Map<string, ParsedDinData>;
-  kroll: Map<string, ParsedDinData>;
-  previews: {
-    mckesson: FilePreview | null;
-    kroll: FilePreview | null;
-  };
 }
 
 /** One parsed transaction row, with the quantity already converted to total units. */
@@ -41,15 +32,51 @@ export interface ParsedIndividualRow {
  */
 export type PackSizeResolver = (din: string) => number | null;
 
-function createFilePreview(
-  file: File,
-  rows: ParsedRow[],
-  uniqueDINs: number
-): FilePreview {
+interface ParsedRow {
+  [key: string]: unknown;
+}
+
+const FILE_EXTENSIONS = ['.csv', '.xlsx', '.xls'] as const;
+
+/** True when a file name ends in one of the supported spreadsheet extensions. */
+export function isSupportedFile(file: File): boolean {
+  const ext = `.${file.name.split('.').pop()?.toLowerCase() ?? ''}`;
+  return (FILE_EXTENSIONS as readonly string[]).includes(ext);
+}
+
+/**
+ * Reads a CSV/Excel file into plain row objects.
+ *
+ * `xlsx` is loaded on demand: it is a large dependency that is only needed once the user
+ * actually uploads a workbook, so it stays out of the initial bundle.
+ */
+async function readRows(file: File): Promise<ParsedRow[]> {
+  const ext = file.name.split('.').pop()?.toLowerCase();
+
+  if (ext === 'csv' || ext === 'txt') {
+    return new Promise<ParsedRow[]>((resolve, reject) => {
+      Papa.parse<ParsedRow>(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => resolve(results.data),
+        error: (err) => reject(new Error(`Failed to parse CSV: ${err.message}`)),
+      });
+    });
+  }
+
+  if (ext === 'xlsx' || ext === 'xls') {
+    const XLSX = await import('xlsx');
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    return XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
+  }
+
+  throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
+}
+
+function createFilePreview(file: File, rows: ParsedRow[], uniqueDINs: number): FilePreview {
   const ext = file.name.split('.').pop()?.toLowerCase() as 'csv' | 'xlsx' | 'xls';
-  const detectedColumns = rows.length > 0 ? Object.keys(rows[0]) : [];
-  const sampleData = rows.slice(0, 5); // First 5 rows as sample
-  const dateRange = detectDateRange(rows);
 
   return {
     fileName: file.name,
@@ -57,18 +84,10 @@ function createFilePreview(
     format: ext,
     totalRows: rows.length,
     uniqueDINs,
-    sampleData,
-    detectedColumns,
-    dateRange,
+    sampleData: rows.slice(0, 5),
+    detectedColumns: rows.length > 0 ? Object.keys(rows[0]) : [],
+    dateRange: detectDateRange(rows),
   };
-}
-
-function normalizeDin(raw: string): string | null {
-  const cleaned = String(raw).trim().replace(/[^0-9]/g, '');
-  if (cleaned.length === 0) return null;
-  // Pad to 8 digits but don't truncate if shorter than 8
-  // This preserves the actual DIN even if it's shorter than 8 digits
-  return cleaned.padStart(8, '0');
 }
 
 /**
@@ -77,26 +96,17 @@ function normalizeDin(raw: string): string | null {
  * Also handles the reverse: trying to remove leading zeros to find matches
  */
 function findMatchingDin(din: string, dataset: Map<string, ParsedDinData>): string | null {
-  // First try exact match
-  if (dataset.has(din)) {
-    return din;
-  }
+  if (dataset.has(din)) return din;
 
-  // Try progressive zero-padding (for DINs missing leading zeros)
-  const cleaned = din.replace(/^0+/, ''); // Remove existing leading zeros
+  const cleaned = din.replace(/^0+/, '');
   for (let length = cleaned.length; length <= 8; length++) {
     const padded = cleaned.padStart(length, '0');
-    if (dataset.has(padded)) {
-      return padded;
-    }
+    if (dataset.has(padded)) return padded;
   }
 
-  // Try removing leading zeros (for DINs with extra leading zeros)
   for (let length = 8; length >= cleaned.length; length--) {
     const truncated = din.slice(8 - length);
-    if (dataset.has(truncated)) {
-      return truncated;
-    }
+    if (dataset.has(truncated)) return truncated;
   }
 
   return null;
@@ -115,10 +125,9 @@ export function generateRowSignature(
   const parts = [din, quantity];
 
   if (date) {
-    parts.push(date.toISOString().split('T')[0]); // Date portion only
+    parts.push(date.toISOString().split('T')[0]);
   }
 
-  // Try to find invoice/transaction number
   const keys = Object.keys(row);
   const invoiceKey = findColumnKey(keys, ['Invoice', 'Invoice #', 'Invoice Number', 'Transaction #', 'Transaction ID', 'Order #', 'Order Number']);
   if (invoiceKey && row[invoiceKey]) {
@@ -139,12 +148,7 @@ export function generateRowSignature(
 
   // Fallback: hash of relevant row data
   if (parts.length === 2) {
-    const relevantData = {
-      din,
-      quantity,
-      date: date?.toISOString(),
-    };
-    parts.push(JSON.stringify(relevantData));
+    parts.push(JSON.stringify({ din, quantity, date: date?.toISOString() }));
   }
 
   return parts.join('|');
@@ -162,58 +166,55 @@ function extractDate(value: unknown): Date | null {
   if (value == null) return null;
   const str = String(value).trim();
   if (!str) return null;
-  
-  // Try parsing as Excel serial date
+
+  // Excel serial date
   if (typeof value === 'number' && value > 0) {
     const excelEpoch = new Date(1899, 11, 30);
     const date = new Date(excelEpoch.getTime() + value * 86400000);
     if (!isNaN(date.getTime())) return date;
   }
-  
-  // Try parsing as string date
+
   const date = new Date(str);
-  if (!isNaN(date.getTime())) return date;
-  
-  return null;
+  return isNaN(date.getTime()) ? null : date;
 }
+
+const DATE_COLUMNS = ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date'];
 
 function detectDateRange(rows: ParsedRow[]): { start: Date | null; end: Date | null } {
   if (rows.length === 0) return { start: null, end: null };
-  
-  const keys = Object.keys(rows[0]);
-  const dateKey = findColumnKey(keys, ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date']);
-  
+
+  const dateKey = findColumnKey(Object.keys(rows[0]), DATE_COLUMNS);
   if (!dateKey) return { start: null, end: null };
-  
+
   const dates: Date[] = [];
   for (const row of rows) {
     const date = extractDate(row[dateKey]);
     if (date) dates.push(date);
   }
-  
   if (dates.length === 0) return { start: null, end: null };
-  
+
   dates.sort((a, b) => a.getTime() - b.getTime());
   return { start: dates[0], end: dates[dates.length - 1] };
 }
 
-function findColumnKey(
-  keys: string[],
-  candidates: string[]
-): string | null {
+function findColumnKey(keys: string[], candidates: string[]): string | null {
   const lowerKeys = keys.map((k) => k.toLowerCase().trim());
   for (const candidate of candidates) {
-    const idx = lowerKeys.findIndex((k) =>
-      k === candidate.toLowerCase() || k.includes(candidate.toLowerCase())
-    );
+    const needle = candidate.toLowerCase();
+    const idx = lowerKeys.findIndex((k) => k === needle || k.includes(needle));
     if (idx !== -1) return keys[idx];
   }
   return null;
 }
 
-interface ParsedRow {
-  [key: string]: unknown;
-}
+const DIN_COLUMNS = ['DIN', 'Drug Identification Number', 'DIN/PIN', 'drug id'];
+const QTY_COLUMNS = {
+  mckesson: ['Quantity', 'Qty', 'Received', 'Purchased', 'Shipped'],
+  kroll: ['Quantity', 'Qty', 'Dispensed', 'Filled', 'Count'],
+};
+const TYPE_COLUMNS = ['Type', 'Transaction Type', 'Action', 'Direction'];
+// More specific drug description column names to avoid picking up patient names
+const DESCRIPTION_COLUMNS = ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Product', 'Medication'];
 
 /**
  * Column names that explicitly carry a pack size. Deliberately strict: a generic
@@ -293,6 +294,38 @@ function resolveTransactionType(
   return isPurchase ? 'purchase' : 'dispense';
 }
 
+/** Every column a parsed row needs, resolved once per file. */
+interface RowColumns {
+  dinKey: string;
+  qtyKey: string | null;
+  typeKey: string | null;
+  dateKey: string | null;
+  descKey: string | null;
+  packSizeKey: string | null;
+}
+
+function resolveColumns(rows: ParsedRow[], source: 'mckesson' | 'kroll'): RowColumns {
+  const keys = Object.keys(rows[0]);
+  const dinKey = findColumnKey(keys, DIN_COLUMNS);
+
+  if (!dinKey) {
+    throw new Error(
+      source === 'mckesson'
+        ? 'Could not find a DIN column in the McKesson file. Expected a column named "DIN" or similar.'
+        : 'Could not find a DIN column in the Kroll file. Expected a column named "DIN" or similar.'
+    );
+  }
+
+  return {
+    dinKey,
+    qtyKey: findColumnKey(keys, QTY_COLUMNS[source]),
+    typeKey: findColumnKey(keys, TYPE_COLUMNS),
+    dateKey: findColumnKey(keys, DATE_COLUMNS),
+    descKey: findColumnKey(keys, DESCRIPTION_COLUMNS),
+    packSizeKey: findColumnKey(keys, PACK_SIZE_COLUMNS),
+  };
+}
+
 /**
  * Resolves the server-side CDSA/DPD reference for every DIN in the file before the rows
  * are aggregated, so drug names, schedules and pack sizes are available while parsing.
@@ -300,10 +333,7 @@ function resolveTransactionType(
 async function prefetchDinReference(rows: ParsedRow[]): Promise<void> {
   if (rows.length === 0) return;
 
-  const dinKey = findColumnKey(
-    Object.keys(rows[0]),
-    ['DIN', 'Drug Identification Number', 'DIN/PIN', 'drug id']
-  );
+  const dinKey = findColumnKey(Object.keys(rows[0]), DIN_COLUMNS);
   if (!dinKey) return;
 
   try {
@@ -313,6 +343,7 @@ async function prefetchDinReference(rows: ParsedRow[]): Promise<void> {
   }
 }
 
+/** Aggregates a file's rows into one entry per DIN (used by reconciliation imports). */
 function aggregateRows(
   rows: ParsedRow[],
   source: 'mckesson' | 'kroll',
@@ -321,38 +352,14 @@ function aggregateRows(
 ): Map<string, ParsedDinData> {
   if (rows.length === 0) return new Map();
 
-  const keys = Object.keys(rows[0]);
-  const dinKey = findColumnKey(keys, ['DIN', 'Drug Identification Number', 'DIN/PIN', 'drug id']);
-  if (!dinKey) {
-    throw new Error(
-      source === 'mckesson'
-        ? 'Could not find a DIN column in the McKesson file. Expected a column named "DIN" or similar.'
-        : 'Could not find a DIN column in the Kroll file. Expected a column named "DIN" or similar.'
-    );
-  }
-
-  const qtyKey = source === 'mckesson'
-    ? findColumnKey(keys, ['Quantity', 'Qty', 'Received', 'Purchased', 'Shipped'])
-    : findColumnKey(keys, ['Quantity', 'Qty', 'Dispensed', 'Filled', 'Count']);
-  const typeKey = findColumnKey(keys, ['Type', 'Transaction Type', 'Action', 'Direction']);
-  const dateKey = findColumnKey(keys, ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date']);
-  // More specific drug description column names to avoid picking up patient names
-  const descKey = findColumnKey(keys, ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Product', 'Medication']);
-  const packSizeKey = findColumnKey(keys, PACK_SIZE_COLUMNS);
-
+  const { dinKey, qtyKey, typeKey, dateKey, descKey, packSizeKey } = resolveColumns(rows, source);
   const result = new Map<string, ParsedDinData>();
 
   for (const row of rows) {
-    const din = normalizeDin(String(row[dinKey] ?? ''));
+    const din = normalizeDin(row[dinKey]);
     if (!din) continue;
 
-    const existing = result.get(din) ?? {
-      din,
-      purchased: 0,
-      dispensed: 0,
-      description: undefined,
-      transactions: []
-    };
+    const existing = result.get(din) ?? { din, purchased: 0, dispensed: 0, description: undefined, transactions: [] };
 
     let qty = qtyKey ? extractNumber(row[qtyKey]) : 1;
     const date = dateKey ? extractDate(row[dateKey]) : null;
@@ -360,9 +367,7 @@ function aggregateRows(
     // Generate row signature for deduplication (on the raw, as-reported quantity)
     if (seenSignatures) {
       const signature = generateRowSignature(din, qty, date, row);
-      if (seenSignatures.has(signature)) {
-        continue;
-      }
+      if (seenSignatures.has(signature)) continue;
       seenSignatures.add(signature);
     }
 
@@ -372,31 +377,19 @@ function aggregateRows(
       // Purchases arrive in packs, so the reported quantity has to be multiplied by
       // the pack size to get total units. Dispensing files already report units.
       const packSize = resolvePackSize(row, din, descKey, packSizeKey, packSizeFor);
-      if (packSize > 1) {
-        qty = qty * packSize;
-      }
+      if (packSize > 1) qty *= packSize;
       existing.purchased += qty;
     } else {
       existing.dispensed += qty;
     }
 
-    // Track individual transaction for deduplication
-    if (existing.transactions) {
-      existing.transactions.push({
-        date,
-        quantity: qty,
-        type: transactionType,
-      });
-    }
+    existing.transactions?.push({ date, quantity: qty, type: transactionType });
 
-    // Extract description if available and not already set
+    // A description is only kept when it looks like a product name rather than a
+    // patient name, which supplier exports sometimes place in the same column.
     if (descKey && !existing.description) {
       const desc = String(row[descKey] ?? '').trim();
-      // Basic validation: should be longer than 5 chars and contain at least one letter/number combo
-      // This helps filter out patient names which are typically shorter or different format
-      if (desc && desc !== '' && desc.length > 5) {
-        existing.description = desc;
-      }
+      if (desc.length > 5) existing.description = desc;
     }
 
     result.set(din, existing);
@@ -405,7 +398,7 @@ function aggregateRows(
   return result;
 }
 
-// New function to parse individual rows without aggregation
+/** Keeps one row per reported transaction (used by the per-row upload flow). */
 function parseIndividualRows(
   rows: ParsedRow[],
   source: 'mckesson' | 'kroll',
@@ -414,39 +407,19 @@ function parseIndividualRows(
 ): ParsedIndividualRow[] {
   if (rows.length === 0) return [];
 
-  const keys = Object.keys(rows[0]);
-  const dinKey = findColumnKey(keys, ['DIN', 'Drug Identification Number', 'DIN/PIN', 'drug id']);
-  if (!dinKey) {
-    throw new Error(
-      source === 'mckesson'
-        ? 'Could not find a DIN column in the McKesson file. Expected a column named "DIN" or similar.'
-        : 'Could not find a DIN column in the Kroll file. Expected a column named "DIN" or similar.'
-    );
-  }
-
-  const qtyKey = source === 'mckesson'
-    ? findColumnKey(keys, ['Quantity', 'Qty', 'Received', 'Purchased', 'Shipped'])
-    : findColumnKey(keys, ['Quantity', 'Qty', 'Dispensed', 'Filled', 'Count']);
-  const typeKey = findColumnKey(keys, ['Type', 'Transaction Type', 'Action', 'Direction']);
-  const dateKey = findColumnKey(keys, ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date']);
-  const descKey = findColumnKey(keys, ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Product', 'Medication']);
-  const packSizeKey = findColumnKey(keys, PACK_SIZE_COLUMNS);
-
+  const { dinKey, qtyKey, typeKey, dateKey, descKey, packSizeKey } = resolveColumns(rows, source);
   const result: ParsedIndividualRow[] = [];
 
   for (const row of rows) {
-    const din = normalizeDin(String(row[dinKey] ?? ''));
+    const din = normalizeDin(row[dinKey]);
     if (!din) continue;
 
     let qty = qtyKey ? extractNumber(row[qtyKey]) : 1;
     const date = dateKey ? extractDate(row[dateKey]) : null;
 
-    // Generate row signature for deduplication (on the raw, as-reported quantity)
     if (seenSignatures) {
       const signature = generateRowSignature(din, qty, date, row);
-      if (seenSignatures.has(signature)) {
-        continue;
-      }
+      if (seenSignatures.has(signature)) continue;
       seenSignatures.add(signature);
     }
 
@@ -457,153 +430,48 @@ function parseIndividualRows(
     let packSize = 1;
     if (transactionType === 'purchase') {
       packSize = resolvePackSize(row, din, descKey, packSizeKey, packSizeFor);
-      if (packSize > 1) {
-        qty = qty * packSize;
-      }
+      if (packSize > 1) qty *= packSize;
     }
 
+    const entry: ParsedIndividualRow = { din, quantity: qty, date, type: transactionType, packSize };
     const description = descKey ? String(row[descKey] ?? '').trim() : undefined;
-    const entry: ParsedIndividualRow = {
-      din,
-      quantity: qty,
-      date,
-      type: transactionType,
-      packSize,
-    };
-    if (description && description.length > 5) {
-      entry.description = description;
-    }
+    if (description && description.length > 5) entry.description = description;
+
     result.push(entry);
   }
 
   return result;
 }
 
-export async function parseReconciliationFiles(
-  mckessonFile: File,
-  krollFile: File,
-  packSizeFor?: PackSizeResolver
-): Promise<FileParseResult> {
-  const mckessonResult = await parseSingleFileWithPreview(mckessonFile, 'mckesson', undefined, packSizeFor);
-  const krollResult = await parseSingleFileWithPreview(krollFile, 'kroll', undefined, packSizeFor);
-  
-  return {
-    mckesson: mckessonResult.data,
-    kroll: krollResult.data,
-    previews: {
-      mckesson: mckessonResult.preview,
-      kroll: krollResult.preview,
-    },
-  };
-}
-
+/** Parses one file into a DIN map plus a preview of what was found. */
 export async function parseSingleFileWithPreview(
   file: File,
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
 ): Promise<{ data: Map<string, ParsedDinData>; preview: FilePreview }> {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-
-  let rows: ParsedRow[] = [];
-
-  if (ext === 'csv' || ext === 'txt') {
-    rows = await new Promise<ParsedRow[]>((resolve, reject) => {
-      Papa.parse<ParsedRow>(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => resolve(results.data),
-        error: (err) => reject(new Error(`Failed to parse CSV: ${err.message}`)),
-      });
-    });
-  } else if (ext === 'xlsx' || ext === 'xls') {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    rows = XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
-  } else {
-    throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
-  }
-
+  const rows = await readRows(file);
   await prefetchDinReference(rows);
 
   const data = aggregateRows(rows, source, seenSignatures, packSizeFor);
-  const preview = createFilePreview(file, rows, data.size);
-
-  return { data, preview };
+  return { data, preview: createFilePreview(file, rows, data.size) };
 }
 
+/** Parses one file into individual transaction rows plus a preview of what was found. */
 export async function parseSingleFileWithIndividualRows(
   file: File,
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
 ): Promise<{ data: ParsedIndividualRow[]; preview: FilePreview }> {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-
-  let rows: ParsedRow[] = [];
-
-  if (ext === 'csv' || ext === 'txt') {
-    rows = await new Promise<ParsedRow[]>((resolve, reject) => {
-      Papa.parse<ParsedRow>(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => resolve(results.data),
-        error: (err) => reject(new Error(`Failed to parse CSV: ${err.message}`)),
-      });
-    });
-  } else if (ext === 'xlsx' || ext === 'xls') {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    rows = XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
-  } else {
-    throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
-  }
-
+  const rows = await readRows(file);
   await prefetchDinReference(rows);
 
   const data = parseIndividualRows(rows, source, seenSignatures, packSizeFor);
-  const preview = createFilePreview(file, rows, data.length);
-
-  return { data, preview };
+  return { data, preview: createFilePreview(file, rows, data.length) };
 }
 
-export async function parseSingleFile(
-  file: File,
-  source: 'mckesson' | 'kroll',
-  seenSignatures?: Set<string>,
-  packSizeFor?: PackSizeResolver
-): Promise<Map<string, ParsedDinData>> {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-
-  let rows: ParsedRow[] = [];
-
-  if (ext === 'csv' || ext === 'txt') {
-    rows = await new Promise<ParsedRow[]>((resolve, reject) => {
-      Papa.parse<ParsedRow>(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => resolve(results.data),
-        error: (err) => reject(new Error(`Failed to parse CSV: ${err.message}`)),
-      });
-    });
-  } else if (ext === 'xlsx' || ext === 'xls') {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    rows = XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
-  } else {
-    throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
-  }
-
-  await prefetchDinReference(rows);
-
-  return aggregateRows(rows, source, seenSignatures, packSizeFor);
-}
-
+/** Merges the purchase and dispensing DIN maps, matching DINs across padding styles. */
 export function mergeDinData(
   mckesson: Map<string, ParsedDinData>,
   kroll: Map<string, ParsedDinData>
@@ -615,28 +483,19 @@ export function mergeDinData(
     let m = mckesson.get(din);
     let k = kroll.get(din);
 
-    // Try progressive zero-padding for McKesson if not found
     if (!m) {
-      const matchedMckessonDin = findMatchingDin(din, mckesson);
-      if (matchedMckessonDin) {
-        m = mckesson.get(matchedMckessonDin);
-      }
+      const matched = findMatchingDin(din, mckesson);
+      if (matched) m = mckesson.get(matched);
     }
-
-    // Try progressive zero-padding for Kroll if not found
     if (!k) {
-      const matchedKrollDin = findMatchingDin(din, kroll);
-      if (matchedKrollDin) {
-        k = kroll.get(matchedKrollDin);
-      }
+      const matched = findMatchingDin(din, kroll);
+      if (matched) k = kroll.get(matched);
     }
 
-    // Use description from McKesson first, then Kroll
-    const description = m?.description ?? k?.description;
     merged.set(din, {
       purchased: (m?.purchased ?? 0) + (k?.purchased ?? 0),
       dispensed: (m?.dispensed ?? 0) + (k?.dispensed ?? 0),
-      description: description,
+      description: m?.description ?? k?.description,
     });
   }
 
@@ -654,26 +513,21 @@ export function deduplicateDinData(
 ): Map<string, ParsedDinData> {
   const result = new Map<string, ParsedDinData>();
 
-  // Deep copy existing data
   for (const [din, data] of existingData) {
-    result.set(din, {
-      din: data.din,
-      purchased: data.purchased,
-      dispensed: data.dispensed,
-      description: data.description,
-      transactions: data.transactions ? [...data.transactions] : [],
-    });
+    result.set(din, { ...data, transactions: data.transactions ? [...data.transactions] : [] });
   }
 
-  if (!existingDateRange || !existingDateRange.start || !existingDateRange.end) {
+  const rangeStart = existingDateRange?.start;
+  const rangeEnd = existingDateRange?.end;
+
+  if (!rangeStart || !rangeEnd) {
     // No date range info, can't deduplicate - just merge all
     for (const [din, data] of newData) {
       const existing = result.get(din);
       if (existing) {
         existing.purchased += data.purchased;
         existing.dispensed += data.dispensed;
-        existing.transactions = [...(existing.transactions || []), ...(data.transactions || [])];
-        result.set(din, existing);
+        existing.transactions = [...(existing.transactions ?? []), ...(data.transactions ?? [])];
       } else {
         result.set(din, data);
       }
@@ -681,55 +535,31 @@ export function deduplicateDinData(
     return result;
   }
 
-  const { start: existingStart, end: existingEnd } = existingDateRange;
-
   for (const [din, data] of newData) {
     const existing = result.get(din);
-
     if (!existing) {
-      // New DIN, add all data
       result.set(din, data);
       continue;
     }
 
-    // Existing DIN, need to deduplicate transactions
     let newPurchased = 0;
     let newDispensed = 0;
     const newTransactions: ParsedDinData['transactions'] = [];
 
-    if (data.transactions) {
-      for (const transaction of data.transactions) {
-        // Skip transaction if it falls within existing date range
-        if (transaction.date &&
-            transaction.date >= existingStart &&
-            transaction.date <= existingEnd) {
-          continue;
-        }
-
-        // Add transaction
-        if (transaction.type === 'purchase') {
-          newPurchased += transaction.quantity;
-        } else {
-          newDispensed += transaction.quantity;
-        }
-        newTransactions.push(transaction);
+    for (const transaction of data.transactions ?? []) {
+      // Skip a transaction that falls inside the date range already covered.
+      if (transaction.date && transaction.date >= rangeStart && transaction.date <= rangeEnd) {
+        continue;
       }
+      if (transaction.type === 'purchase') newPurchased += transaction.quantity;
+      else newDispensed += transaction.quantity;
+      newTransactions.push(transaction);
     }
 
-    // Merge with existing
     existing.purchased += newPurchased;
     existing.dispensed += newDispensed;
-    existing.transactions = [...(existing.transactions || []), ...newTransactions];
-    result.set(din, existing);
+    existing.transactions = [...(existing.transactions ?? []), ...newTransactions];
   }
 
   return result;
-}
-
-export function detectFileFormat(file: File): 'csv' | 'xlsx' | 'xls' | 'unknown' {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-  if (ext === 'csv' || ext === 'txt') return 'csv';
-  if (ext === 'xlsx') return 'xlsx';
-  if (ext === 'xls') return 'xls';
-  return 'unknown';
 }
