@@ -127,6 +127,18 @@ function generateRowSignature(
     parts.push(String(row[invoiceKey]).trim());
   }
 
+  // Product number / description: one invoice can hold several products that share a DIN
+  // (e.g. a 100-pack and a 200-pack) with the same quantity. Without this they were
+  // wrongly treated as duplicates and dropped.
+  const productKey = findColumnKey(keys, ['Product(s) #', 'Product #', 'Product Number', 'Product ID', 'Item #', 'Item Number', 'SKU']);
+  if (productKey && row[productKey]) {
+    parts.push(`p${String(row[productKey]).trim()}`);
+  }
+  const descKey = findColumnKey(keys, ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Medication']);
+  if (descKey && row[descKey]) {
+    parts.push(String(row[descKey]).trim().replace(/\s+/g, ' ').toUpperCase());
+  }
+
   // Fallback: hash of relevant row data
   if (parts.length === 2) {
     const relevantData = {
