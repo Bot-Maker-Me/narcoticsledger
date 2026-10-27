@@ -4,6 +4,7 @@ import { useSystemSettings, useCreateCheckoutSession } from '@/hooks/useAdmin';
 import { hasAccess } from '@/lib/access';
 import { formatPrice } from '@/lib/format';
 import { formatDate } from '@/lib/dates';
+import { getErrorMessage } from '@/lib/errors';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 
@@ -43,17 +44,12 @@ export default function SubscriptionPaywall() {
   const price = settings ? formatPrice(settings.subscription_price_cents) : '$29.00';
 
   const handleSubscribe = async () => {
-    if (!settings) return;
     try {
-      const { url } = await checkoutMutation.mutateAsync(settings.subscription_price_cents);
-      if (url) {
-        window.location.href = url;
-      } else {
-        toast.error('Failed to create checkout session');
-      }
+      // The amount is decided by the server from system_settings; the browser never sends it.
+      const { url } = await checkoutMutation.mutateAsync();
+      window.location.href = url;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start checkout';
-      toast.error(message);
+      toast.error(getErrorMessage(err, 'Failed to start checkout'));
     }
   };
 

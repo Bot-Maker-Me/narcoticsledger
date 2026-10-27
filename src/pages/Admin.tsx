@@ -1,20 +1,12 @@
 import { useState } from 'react';
-import {
-  Shield,
-  Users,
-  DollarSign,
-  Activity,
-  FileText,
-  BarChart3,
-} from 'lucide-react';
+import { Shield, Users, DollarSign, Activity, FileText } from 'lucide-react';
 import SectionMarker from '@/components/SectionMarker';
 import { UsersTab } from '@/components/admin/UsersTab';
 import { PricingTab } from '@/components/admin/PricingTab';
 import { HealthTab } from '@/components/admin/HealthTab';
 import { AuditTab } from '@/components/admin/AuditTab';
-import { FeaturesTab } from '@/components/admin/FeaturesTab';
 
-type Tab = 'users' | 'pricing' | 'health' | 'audit' | 'features';
+type Tab = 'users' | 'pricing' | 'health' | 'audit';
 
 export default function Admin() {
   const [tab, setTab] = useState<Tab>('users');
@@ -24,7 +16,6 @@ export default function Admin() {
     { id: 'pricing', label: 'Pricing Settings', icon: DollarSign },
     { id: 'health', label: 'System Health', icon: Activity },
     { id: 'audit', label: 'Audit Log', icon: FileText },
-    { id: 'features', label: 'Feature Toggles', icon: BarChart3 },
   ];
 
   return (
@@ -63,7 +54,6 @@ export default function Admin() {
       {tab === 'pricing' && <PricingTab />}
       {tab === 'health' && <HealthTab />}
       {tab === 'audit' && <AuditTab />}
-      {tab === 'features' && <FeaturesTab />}
     </div>
   );
 }

@@ -4,9 +4,16 @@ import { digitsOf, isValidDin } from '@/lib/din';
 import { getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
 import { toLedgerDateString } from '@/lib/ledgerDate';
 import type { ParsedDinData } from '@/types/reconciliation';
+import type { ParsedIndividualRow } from '@/lib/fileParser';
 import type { TransactionType } from '@/types/transaction';
 
 export type ImportKind = 'purchase' | 'dispense' | 'destruction';
+
+/** The ledger label used for rows created by hand rather than imported from a file. */
+export const MANUAL_ENTRY_LABEL = 'Manual entry';
+
+/** The ledger label used for rows written by `dispense_prescription`. */
+export const PRESCRIPTION_LABEL = 'Prescription';
 
 export interface ImportedRecordRow {
   id: string;
@@ -26,13 +33,10 @@ interface SaveResult {
 }
 
 /** How each import kind is written to the ledger. */
-const KIND_CONFIG: Record<
-  ImportKind,
-  { type: TransactionType; source: string; notesPrefix: string }
-> = {
-  purchase: { type: 'PURCHASE', source: 'purchase_import', notesPrefix: 'Purchase import' },
-  dispense: { type: 'DISPENSE', source: 'dispense_import', notesPrefix: 'Dispense import' },
-  destruction: { type: 'ADJUSTMENT', source: 'destruction_import', notesPrefix: 'Destruction import' },
+const KIND_CONFIG: Record<ImportKind, { type: TransactionType; source: string }> = {
+  purchase: { type: 'PURCHASE', source: 'purchase_import' },
+  dispense: { type: 'DISPENSE', source: 'dispense_import' },
+  destruction: { type: 'ADJUSTMENT', source: 'destruction_import' },
 };
 
 /** One ledger write, before the drug row has been resolved. */
@@ -62,7 +66,13 @@ function latestTransactionDate(record: ParsedDinData): string {
   return toLedgerDateString(latest.date);
 }
 
-/** Resolves (or creates) the `drugs` row for a DIN and returns its id. */
+/**
+ * Resolves (or creates) this pharmacy's `drugs` row for a DIN and returns its id.
+ *
+ * Drug rows are per-user: DIN uniqueness is scoped to `(user_id, din)` and the drugs table
+ * is only readable by its owner, so a DIN another pharmacy already imported is simply
+ * created here rather than shared.
+ */
 async function ensureDrugId(din: string, description?: string): Promise<string> {
   const normalizedDin = digitsOf(din);
 
@@ -210,7 +220,7 @@ async function saveImportedIndividualRows({
   fileName,
 }: {
   kind: ImportKind;
-  rows: Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }>;
+  rows: ParsedIndividualRow[];
   fileName?: string;
 }): Promise<SaveResult> {
   const valid = rows.filter((row) => row.din && row.quantity > 0);
@@ -253,6 +263,7 @@ async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow
       .from('inventory_transactions')
       .select('id, quantity, created_at, date, file_name, drugs!inner(din, description)')
       .eq('transaction_type', config.type)
+      .is('voided_at', null)
       .order('created_at', { ascending: false })
       .order('id', { ascending: true })
       .range(from, from + FETCH_PAGE_SIZE - 1);
@@ -280,6 +291,7 @@ export function useImportedRecords(kind: ImportKind) {
   return useQuery({
     queryKey: ['imported-records', kind],
     queryFn: () => fetchImportedRecords(kind),
+    enabled: kind === 'purchase' || kind === 'dispense' || kind === 'destruction',
   });
 }
 
@@ -311,52 +323,55 @@ export function useSaveImportedRecords(kind: ImportKind) {
 export function useSaveImportedIndividualRows(kind: ImportKind) {
   return useSaveMutation(
     kind,
-    ({
-      rows,
-      fileName,
-    }: {
-      rows: Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }>;
-      fileName?: string;
-    }) => saveImportedIndividualRows({ kind, rows, fileName })
+    ({ rows, fileName }: { rows: ParsedIndividualRow[]; fileName?: string }) =>
+      saveImportedIndividualRows({ kind, rows, fileName })
   );
 }
 
 /** A file label written by an older version of the app, e.g. "Imported 9/5/2025". */
 const LEGACY_LABEL_PREFIX = 'Imported ';
 
-async function deleteTransactionsByFileName(fileName: string, kind: ImportKind): Promise<number> {
+/**
+ * Voids a file's ledger rows instead of deleting them.
+ *
+ * `inventory_transactions` is append-only at the database level (the `authenticated` role
+ * only has SELECT and INSERT), so the audit trail always survives. Voided rows drop out of
+ * stock maths and the record browsers via `voided_at`.
+ */
+async function voidImportedFile(fileName: string, kind: ImportKind): Promise<number> {
   const config = KIND_CONFIG[kind];
 
-  // Older records were saved before file names existed, so they can only be removed by
-  // the day they were imported.
+  // Older records were saved before file names existed, so they can only be located by the
+  // day they were imported.
   if (fileName.startsWith(LEGACY_LABEL_PREFIX)) {
     const parsed = parseLegacyLabel(fileName.slice(LEGACY_LABEL_PREFIX.length));
-    if (!parsed) throw new Error('Could not parse date from old record label');
+    if (!parsed) throw new Error('Could not parse a date from this old record label');
 
     const startOfDay = new Date(parsed);
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(parsed);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const { error, count } = await supabase
-      .from('inventory_transactions')
-      .delete()
-      .eq('transaction_type', config.type)
-      .gte('created_at', startOfDay.toISOString())
-      .lte('created_at', endOfDay.toISOString());
+    const { data, error } = await supabase.rpc('void_imported_records', {
+      p_transaction_type: config.type,
+      p_file_name: null,
+      p_start: startOfDay.toISOString(),
+      p_end: endOfDay.toISOString(),
+    });
 
     if (error) throw error;
-    return count || 0;
+    return Number(data ?? 0);
   }
 
-  const { error, count } = await supabase
-    .from('inventory_transactions')
-    .delete()
-    .eq('file_name', fileName)
-    .eq('transaction_type', config.type);
+  const { data, error } = await supabase.rpc('void_imported_records', {
+    p_transaction_type: config.type,
+    p_file_name: fileName,
+    p_start: null,
+    p_end: null,
+  });
 
   if (error) throw error;
-  return count || 0;
+  return Number(data ?? 0);
 }
 
 /** Parses "9/5/2025" (day-first, then month-first) or any string a Date accepts. */
@@ -374,10 +389,14 @@ function parseLegacyLabel(label: string): Date | null {
   return isNaN(fallback.getTime()) ? null : fallback;
 }
 
-export function useDeleteImportedFile(kind: ImportKind) {
+/**
+ * The raw void mutation. Screens should use `useDeleteImportedFile` from
+ * `@/hooks/useDeleteImportedFile` instead, which adds the confirmation step and the toast.
+ */
+export function useVoidImportedFile(kind: ImportKind) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (fileName: string) => deleteTransactionsByFileName(fileName, kind),
+    mutationFn: (fileName: string) => voidImportedFile(fileName, kind),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['imported-records', kind] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });

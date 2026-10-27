@@ -1,98 +1,56 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import type { AdminUser, SystemSettings, SystemHealth, AuditLog } from '@/types/admin';
+import { reportError } from '@/lib/errors';
+import type {
+  AdminUser,
+  SystemSettings,
+  SystemHealth,
+  AuditLog,
+  SubscriptionStatus,
+} from '@/types/admin';
 
-const DEFAULT_SETTINGS: SystemSettings = {
-  id: 1,
-  subscription_price_cents: 2900,
-  trial_days: 14,
-  updated_at: new Date().toISOString(),
-};
+/**
+ * Admin and billing data hooks.
+ *
+ * Every privileged read and write goes through a SECURITY DEFINER RPC that re-checks the
+ * caller's admin role in the database. The previous version queried a `users` table that
+ * does not exist and wrote to `system_settings` directly over the API (which RLS blocks),
+ * so the whole admin panel silently reported zeros and fake success.
+ */
+
+const AUDIT_LOG_LIMIT = 50;
 
 async function fetchSystemSettings(): Promise<SystemSettings> {
-  try {
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('*')
-      .eq('id', 1)
-      .single();
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('id, subscription_price_cents, trial_days, updated_at')
+    .eq('id', 1)
+    .single();
 
-    if (error) {
-      console.error('Error fetching system settings:', error);
-      // Fall back to defaults if the table does not exist.
-      return DEFAULT_SETTINGS;
-    }
-
-    return data;
-  } catch (error) {
-    console.error('Error in fetchSystemSettings:', error);
-    return DEFAULT_SETTINGS;
-  }
+  if (error) throw error;
+  return data;
 }
 
 async function fetchAdminUsers(): Promise<AdminUser[]> {
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, email, role, subscription_status, trial_ends_at, created_at')
-      .order('created_at', { ascending: false })
-      .limit(50);
+  const { data, error } = await supabase.rpc('admin_list_users');
+  if (error) throw error;
 
-    if (error) {
-      console.error('Public users table error:', error);
-      return [];
-    }
-
-    return (data ?? []).map((user) => ({
-      id: user.id,
-      email: user.email,
-      role: user.role || 'user',
-      subscription_status: user.subscription_status || 'none',
-      trial_ends_at: user.trial_ends_at,
-      created_at: user.created_at,
-    }));
-  } catch (error) {
-    console.error('Error in fetchAdminUsers:', error);
-    return [];
-  }
+  return (data ?? []).map((user) => ({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    subscription_status: (user.subscription_status ?? 'none') as SubscriptionStatus,
+    trial_ends_at: user.trial_ends_at,
+    created_at: user.created_at,
+  }));
 }
 
 async function fetchSystemHealth(): Promise<SystemHealth> {
-  try {
-    // Simple fallback to avoid RPC dependency.
-    const { data: users, error: usersError } = await supabase
-      .from('users')
-      .select('id, subscription_status, trial_ends_at');
+  const { data, error } = await supabase.rpc('admin_system_health');
+  if (error) throw error;
 
-    let totalUsers = 0;
-    let activeSubscriptions = 0;
-    let trialingUsers = 0;
-
-    if (!usersError && users) {
-      totalUsers = users.length;
-      activeSubscriptions = users.filter((u) => u.subscription_status === 'active').length;
-      trialingUsers = users.filter((u) => u.subscription_status === 'trialing').length;
-    }
-
-    let activeCycles = 0;
-    const { count, error: cyclesError } = await supabase
-      .from('reconciliation_cycles')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'in_progress');
-
-    if (!cyclesError && count) {
-      activeCycles = count;
-    }
-
-    return {
-      total_users: totalUsers,
-      active_subscriptions: activeSubscriptions,
-      trialing_users: trialingUsers,
-      active_cycles: activeCycles,
-      recent_webhook_errors: 0,
-    };
-  } catch (error) {
-    console.error('Error in fetchSystemHealth:', error);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) {
     return {
       total_users: 0,
       active_subscriptions: 0,
@@ -101,128 +59,79 @@ async function fetchSystemHealth(): Promise<SystemHealth> {
       recent_webhook_errors: 0,
     };
   }
+
+  return {
+    total_users: Number(row.total_users ?? 0),
+    active_subscriptions: Number(row.active_subscriptions ?? 0),
+    trialing_users: Number(row.trialing_users ?? 0),
+    active_cycles: Number(row.active_cycles ?? 0),
+    recent_webhook_errors: Number(row.recent_webhook_errors ?? 0),
+  };
 }
 
 async function fetchAuditLogs(): Promise<AuditLog[]> {
-  try {
-    // Returns an empty list when the audit_logs table is not present.
-    const { data, error } = await supabase
-      .from('audit_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50);
+  const { data, error } = await supabase.rpc('admin_list_audit_logs', {
+    p_limit: AUDIT_LOG_LIMIT,
+  });
 
-    if (error) {
-      return [];
-    }
-
-    return data ?? [];
-  } catch (error) {
-    console.error('Error in fetchAuditLogs:', error);
-    return [];
-  }
+  if (error) throw error;
+  return (data ?? []) as AuditLog[];
 }
 
 async function extendTrial(userId: string, days: number): Promise<void> {
-  try {
-    const { data: user, error: fetchError } = await supabase
-      .from('users')
-      .select('trial_ends_at')
-      .eq('id', userId)
-      .single();
-
-    if (fetchError) {
-      console.error('Error fetching user for trial extension:', fetchError);
-      throw fetchError;
-    }
-
-    const currentEnd = user.trial_ends_at ? new Date(user.trial_ends_at) : new Date();
-    const newEnd = new Date(currentEnd.getTime() + days * 24 * 60 * 60 * 1000);
-
-    const { error } = await supabase
-      .from('users')
-      .update({
-        trial_ends_at: newEnd.toISOString(),
-        subscription_status: 'trialing',
-      })
-      .eq('id', userId);
-
-    if (error) {
-      console.error('Error extending trial:', error);
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error in extendTrial:', error);
-    throw error;
-  }
+  const { error } = await supabase.rpc('admin_extend_trial', {
+    p_user_id: userId,
+    p_days: days,
+  });
+  if (error) throw error;
 }
 
 async function activateSubscription(userId: string): Promise<void> {
-  try {
-    const { error } = await supabase
-      .from('users')
-      .update({ subscription_status: 'active' })
-      .eq('id', userId);
-
-    if (error) {
-      console.error('Error activating subscription:', error);
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error in activateSubscription:', error);
-    throw error;
-  }
+  const { error } = await supabase.rpc('admin_activate_subscription', { p_user_id: userId });
+  if (error) throw error;
 }
 
 async function revokeAccess(userId: string): Promise<void> {
-  try {
-    const { error } = await supabase
-      .from('users')
-      .update({ subscription_status: 'revoked' })
-      .eq('id', userId);
-
-    if (error) {
-      console.error('Error revoking access:', error);
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error in revokeAccess:', error);
-    throw error;
-  }
+  const { error } = await supabase.rpc('admin_revoke_access', { p_user_id: userId });
+  if (error) throw error;
 }
 
 async function updatePricing(priceCents: number, trialDays: number): Promise<void> {
-  try {
-    const { error } = await supabase
-      .from('system_settings')
-      .update({
-        subscription_price_cents: priceCents,
-        trial_days: trialDays,
-      })
-      .eq('id', 1);
-
-    if (error) {
-      console.error('Error updating pricing:', error);
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error in updatePricing:', error);
-    throw error;
-  }
-}
-
-async function createCheckoutSession(priceCents: number): Promise<{ url: string }> {
-  const { data, error } = await supabase.functions.invoke('stripe-checkout', {
-    body: { price_cents: priceCents },
+  const { error } = await supabase.rpc('admin_update_pricing', {
+    p_price_cents: priceCents,
+    p_trial_days: trialDays,
   });
   if (error) throw error;
-  return data;
+}
+
+/**
+ * Starts a Stripe Checkout session. The price is chosen by the server from
+ * `system_settings`; nothing about the amount is sent from the browser.
+ */
+async function createCheckoutSession(): Promise<{ url: string }> {
+  const { data, error } = await supabase.functions.invoke('stripe-checkout', { body: {} });
+  if (error) throw error;
+
+  const url = (data as { url?: string } | null)?.url;
+  if (!url) throw new Error('Stripe did not return a checkout URL');
+  return { url };
+}
+
+/** Opens the Stripe billing portal so a subscriber can cancel or change their card. */
+async function createBillingPortalSession(): Promise<{ url: string }> {
+  const { data, error } = await supabase.functions.invoke('stripe-portal', { body: {} });
+  if (error) throw error;
+
+  const url = (data as { url?: string } | null)?.url;
+  if (!url) throw new Error('Stripe did not return a billing portal URL');
+  return { url };
 }
 
 export function useSystemSettings() {
   return useQuery({
     queryKey: ['system-settings'],
     queryFn: fetchSystemSettings,
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -248,40 +157,32 @@ export function useAuditLogs() {
   });
 }
 
-export function useExtendTrial() {
+/** Shared invalidation for the admin mutations, which all keep an audit trail. */
+function useAdminMutation<TVariables>(mutationFn: (variables: TVariables) => Promise<void>) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, days }: { userId: string; days: number }) => extendTrial(userId, days),
+    mutationFn,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['audit-logs'] });
       queryClient.invalidateQueries({ queryKey: ['system-health'] });
     },
+    onError: (error) => reportError(error, { scope: 'admin-mutation' }),
   });
+}
+
+export function useExtendTrial() {
+  return useAdminMutation(({ userId, days }: { userId: string; days: number }) =>
+    extendTrial(userId, days)
+  );
 }
 
 export function useActivateSubscription() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: activateSubscription,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      queryClient.invalidateQueries({ queryKey: ['audit-logs'] });
-      queryClient.invalidateQueries({ queryKey: ['system-health'] });
-    },
-  });
+  return useAdminMutation((userId: string) => activateSubscription(userId));
 }
 
 export function useRevokeAccess() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: revokeAccess,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      queryClient.invalidateQueries({ queryKey: ['audit-logs'] });
-      queryClient.invalidateQueries({ queryKey: ['system-health'] });
-    },
-  });
+  return useAdminMutation((userId: string) => revokeAccess(userId));
 }
 
 export function useUpdatePricing() {
@@ -297,7 +198,9 @@ export function useUpdatePricing() {
 }
 
 export function useCreateCheckoutSession() {
-  return useMutation({
-    mutationFn: createCheckoutSession,
-  });
+  return useMutation({ mutationFn: createCheckoutSession });
+}
+
+export function useCreateBillingPortalSession() {
+  return useMutation({ mutationFn: createBillingPortalSession });
 }

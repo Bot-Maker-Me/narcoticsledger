@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import { reportError } from '@/lib/errors';
 import type { Profile } from '@/types/admin';
 
 interface AuthContextValue {
@@ -11,9 +12,19 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, pharmacyName?: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Emails a recovery link that returns the user to `/reset-password`. */
+  resetPassword: (email: string) => Promise<void>;
+  /** Sets a new password for the signed-in user (used by the recovery screen). */
+  updatePassword: (password: string) => Promise<void>;
+  updatePharmacyName: (name: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+/** Absolute app URLs for the flows that come back through a link. */
+function callbackUrl(path: string): string {
+  return new URL(path, window.location.origin).href;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -63,6 +74,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (error) reportError(error, { scope: 'get_my_profile' });
+
       const { data: existing } = await supabase
         .from('profiles')
         .select('*')
@@ -98,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email,
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}/`,
+        emailRedirectTo: callbackUrl('/auth/callback'),
         data: {
           pharmacy_name: pharmacyName || 'My Pharmacy',
         },
@@ -117,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .update({ pharmacy_name: pharmacyName })
           .eq('id', data.user.id);
       } catch (err) {
-        console.error('Error updating pharmacy name:', err);
+        reportError(err, { scope: 'signup-pharmacy-name' });
         // Don't throw error, signup was successful
       }
     }
@@ -128,6 +141,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
   };
 
+  const resetPassword = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: callbackUrl('/reset-password'),
+    });
+    if (error) throw error;
+  };
+
+  const updatePassword = async (password: string) => {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
+  };
+
+  const updatePharmacyName = async (name: string) => {
+    if (!session?.user) throw new Error('You need to be signed in to do that');
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ pharmacy_name: name })
+      .eq('id', session.user.id);
+
+    if (error) throw error;
+    setProfile((previous) => (previous ? { ...previous, pharmacy_name: name } : previous));
+  };
+
   const value: AuthContextValue = {
     session,
     user: session?.user ?? null,
@@ -136,6 +173,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn,
     signUp,
     signOut,
+    resetPassword,
+    updatePassword,
+    updatePharmacyName,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

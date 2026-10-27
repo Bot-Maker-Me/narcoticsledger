@@ -238,7 +238,7 @@ export default function Layout() {
         <footer className="border-t border-white/5 px-4 py-4 lg:px-8">
           <div className="flex flex-col items-center justify-between gap-2 text-center sm:flex-row sm:text-left">
             <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-400">
-              © {new Date().getFullYear()} PharmaFlow · Encrypted · Role-based access · Every action
+              © {new Date().getFullYear()} Narcotics Ledger · Encrypted · Role-based access · Every action
               logged
             </p>
             <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-5">

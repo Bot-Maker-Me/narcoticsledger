@@ -23,6 +23,8 @@ import Settings from '@/pages/Settings';
 import TransactionHistory from '@/pages/TransactionHistory';
 import Admin from '@/pages/Admin';
 import Terms from '@/pages/Terms';
+import ResetPassword from '@/pages/ResetPassword';
+import AuthCallback from '@/pages/AuthCallback';
 import PurchaseRecords from '@/pages/PurchaseRecords';
 import DispensingRecords from '@/pages/DispensingRecords';
 import DestructionRecords from '@/pages/DestructionRecords';
@@ -70,6 +72,18 @@ function AppRoutes() {
           </PublicRoute>
         }
       />
+      {/* Recovery links sign the user in, so this must NOT sit behind PublicRoute. */}
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
+      {/* Legal pages are public: the signup form links to the terms. */}
+      <Route
+        path="/terms"
+        element={
+          <div className="min-h-screen px-4 py-8">
+            <Terms />
+          </div>
+        }
+      />
       <Route
         element={
           <ProtectedRoute>
@@ -95,7 +109,6 @@ function AppRoutes() {
         <Route path="/dispensing-records" element={<DispensingRecords />} />
         <Route path="/destruction-records" element={<DestructionRecords />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/terms" element={<Terms />} />
         <Route
           path="/admin"
           element={

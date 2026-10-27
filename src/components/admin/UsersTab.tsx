@@ -17,9 +17,10 @@ import {
 import type { AdminUser } from '@/types/admin';
 import { subStatusConfig } from '@/components/admin/shared';
 import { formatDate } from '@/lib/dates';
+import { getErrorMessage } from '@/lib/errors';
 
 export function UsersTab() {
-  const { data: users, isLoading, isError, refetch } = useAdminUsers();
+  const { data: users, isLoading, isError, error, refetch } = useAdminUsers();
   const extendTrialMutation = useExtendTrial();
   const activateMutation = useActivateSubscription();
   const revokeMutation = useRevokeAccess();
@@ -46,8 +47,7 @@ export function UsersTab() {
       setActionTarget(null);
       setActionType(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Action failed';
-      toast.error(message);
+      toast.error(getErrorMessage(err, 'Action failed'));
     }
   };
 
@@ -65,7 +65,7 @@ export function UsersTab() {
       <div className="card p-12 text-center">
         <AlertTriangle className="mx-auto h-10 w-10 text-error-300" />
         <p className="mt-3 text-sm text-neutral-500">Failed to load users</p>
-        <p className="mt-1 text-xs text-neutral-400">The users table may not exist in your database</p>
+        <p className="mt-1 text-xs text-neutral-400">{getErrorMessage(error)}</p>
         <button onClick={() => refetch()} className="btn-secondary mt-3">
           Try again
         </button>

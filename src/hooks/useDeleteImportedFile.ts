@@ -1,33 +1,41 @@
 import { useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
-import { useDeleteImportedFile as useDeleteMutation, type ImportKind } from '@/hooks/useImportedRecords';
+import { useVoidImportedFile, type ImportKind } from '@/hooks/useImportedRecords';
+import { getErrorMessage } from '@/lib/errors';
 
 /**
- * Deletes every record that came from one uploaded file, behind a confirmation dialog.
+ * Voids every record that came from one uploaded file, behind a confirmation dialog.
  *
- * The confirm + toast + error handling used to be copy-pasted into four record screens,
- * each calling the native `window.confirm`.
+ * The ledger is append-only (`inventory_transactions` only grants SELECT and INSERT to
+ * signed-in users), so records are marked voided rather than deleted: stock maths and the
+ * record browsers drop them, but the audit trail keeps them forever.
  */
 export function useDeleteImportedFile(kind: ImportKind) {
   const confirm = useConfirm();
-  const mutation = useDeleteMutation(kind);
+  const mutation = useVoidImportedFile(kind);
 
   const deleteFile = useCallback(
     async (fileName: string) => {
       const confirmed = await confirm({
-        title: 'Delete imported records?',
-        description: `Every record from "${fileName}" will be deleted. This also removes them from Transaction History.`,
-        confirmLabel: 'Delete',
+        title: 'Void these records?',
+        description:
+          `Every record from "${fileName}" will be voided. Voided records stay in ` +
+          'Transaction History for the audit trail but stop counting toward stock.',
+        confirmLabel: 'Void records',
         destructive: true,
       });
       if (!confirmed) return;
 
       try {
-        await mutation.mutateAsync(fileName);
-        toast.success(`Deleted all records from "${fileName}"`);
+        const voided = await mutation.mutateAsync(fileName);
+        if (voided === 0) {
+          toast.error('No matching records to void');
+          return;
+        }
+        toast.success(`Voided ${voided} record${voided === 1 ? '' : 's'} from "${fileName}"`);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to delete records');
+        toast.error(getErrorMessage(err, 'Failed to void records'));
       }
     },
     [confirm, mutation]

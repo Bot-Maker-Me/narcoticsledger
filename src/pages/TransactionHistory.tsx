@@ -6,13 +6,15 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  Ban,
   Clock,
   Search,
   Filter,
   X,
 } from 'lucide-react';
-import { useTransactions, useFilteredTransactions } from '@/hooks/useTransactions';
+import { useFilteredTransactions } from '@/hooks/useTransactions';
 import { formatLedgerDate } from '@/lib/ledgerDate';
+import { getErrorMessage } from '@/lib/errors';
 import type { TransactionType } from '@/types/transaction';
 import SectionMarker from '@/components/SectionMarker';
 
@@ -50,7 +52,7 @@ export default function TransactionHistory() {
   const [endDate, setEndDate] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
-  const { data, isLoading, isError, refetch } = useFilteredTransactions({
+  const { data, isLoading, isError, error, refetch } = useFilteredTransactions({
     page,
     search: search || undefined,
     type: typeFilter || undefined,
@@ -210,7 +212,7 @@ export default function TransactionHistory() {
           <div className="py-12 text-center">
             <AlertTriangle className="mx-auto h-10 w-10 text-error-300" />
             <p className="mt-3 text-sm text-neutral-500">Failed to load transactions</p>
-            <p className="mt-1 text-xs text-neutral-400">Check console for error details</p>
+            <p className="mt-1 text-xs text-neutral-400">{getErrorMessage(error)}</p>
             <button onClick={() => refetch()} className="btn-secondary mt-3">
               Try again
             </button>
@@ -240,14 +242,30 @@ export default function TransactionHistory() {
                     const TypeIcon = config.icon;
                     const isPositive = tx.quantity > 0;
                     return (
-                      <tr key={tx.id} className="transition-colors hover:bg-neutral-50/50">
+                      <tr
+                        key={tx.id}
+                        className={`transition-colors hover:bg-neutral-50/50 ${
+                          tx.voided_at ? 'opacity-60' : ''
+                        }`}
+                      >
                         <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${config.style}`}
-                          >
-                            <TypeIcon className="h-3 w-3" />
-                            {config.label}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${config.style}`}
+                            >
+                              <TypeIcon className="h-3 w-3" />
+                              {config.label}
+                            </span>
+                            {tx.voided_at && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-500"
+                                title={`Voided ${formatLedgerDate(tx.voided_at)} — kept for the audit trail`}
+                              >
+                                <Ban className="h-3 w-3" />
+                                Voided
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-sm font-medium text-neutral-800">

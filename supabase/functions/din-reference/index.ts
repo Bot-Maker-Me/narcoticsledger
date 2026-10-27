@@ -1,11 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { CDSA_REFERENCE_B64 } from "../_shared/cdsaReferenceData.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { jsonError, jsonResponse, preflight } from "../_shared/cors.ts";
 
 interface ReferenceEntry {
   din: string;
@@ -65,26 +61,16 @@ function dinCandidates(raw: string): string[] {
   return candidates;
 }
 
-function jsonResponse(payload: unknown, status = 200): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return preflight(req);
+  if (req.method !== "POST") return jsonError("Method not allowed", 405, req);
 
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed" }, 405);
-  }
-
+  // Edge functions deploy with verify_jwt disabled, so the caller's JWT is verified here
+  // before any reference data is served.
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) {
     console.error("[din-reference] rejected: missing authorization header");
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonError("Unauthorized", 401, req);
   }
 
   const supabase = createClient(
@@ -97,14 +83,14 @@ serve(async (req) => {
   const { data: userData, error: userError } = await supabase.auth.getUser(token);
   if (userError || !userData?.user) {
     console.error("[din-reference] rejected: invalid token", userError?.message);
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return jsonError("Unauthorized", 401, req);
   }
 
   let body: { dins?: unknown } = {};
   try {
     body = await req.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON body" }, 400);
+    return jsonError("Invalid JSON body", 400, req);
   }
 
   const requested = Array.isArray(body.dins) ? body.dins.slice(0, 2000) : [];
@@ -127,5 +113,5 @@ serve(async (req) => {
   }
 
   console.log(`[din-reference] looked up ${requested.length} DINs, matched ${entries.length}`);
-  return jsonResponse({ entries });
+  return jsonResponse({ entries }, 200, req);
 });

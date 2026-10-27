@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
-import { Loader2, Search, FileText } from 'lucide-react';
+import { Loader2, Search, FileText, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuditLogs } from '@/hooks/useAdmin';
 import { formatDate } from '@/lib/dates';
+import { getErrorMessage } from '@/lib/errors';
 
 export function AuditTab() {
-  const { data: auditLogs, isLoading } = useAuditLogs();
+  const { data: auditLogs, isLoading, isError, error, refetch } = useAuditLogs();
   const [filterAction, setFilterAction] = useState<string>('');
   const [filterUser, setFilterUser] = useState<string>('');
 
@@ -23,6 +24,19 @@ export function AuditTab() {
       <div className="card p-12 text-center">
         <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-300" />
         <p className="mt-3 text-sm text-neutral-400">Loading audit logs...</p>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="card p-12 text-center">
+        <AlertTriangle className="mx-auto h-10 w-10 text-error-300" />
+        <p className="mt-3 text-sm text-neutral-500">Failed to load the audit log</p>
+        <p className="mt-1 text-xs text-neutral-400">{getErrorMessage(error)}</p>
+        <button onClick={() => refetch()} className="btn-secondary mt-3">
+          Try again
+        </button>
       </div>
     );
   }

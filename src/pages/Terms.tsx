@@ -20,14 +20,14 @@ export default function Terms() {
             <p><strong>Last Updated:</strong> {formatDate(new Date())}</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">1. Acceptance of Terms</h3>
-            <p>By accessing and using PharmaFlow, you agree to be bound by these Terms of Service and all applicable laws and regulations. If you do not agree with any of these terms, you are prohibited from using this service.</p>
+            <p>By accessing and using Narcotics Ledger, you agree to be bound by these Terms of Service and all applicable laws and regulations. If you do not agree with any of these terms, you are prohibited from using this service.</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">2. Age Requirement</h3>
-            <p>You must be at least 13 years old to use this service. By using PharmaFlow, you represent and warrant that you are at least 13 years old.</p>
+            <p>You must be at least 13 years old to use this service. By using Narcotics Ledger, you represent and warrant that you are at least 13 years old.</p>
             <p className="text-xs text-neutral-500 mt-2">*For Canadian users: In compliance with Canadian privacy laws, we do not knowingly collect personal information from individuals under 13 years of age without parental consent.</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">3. Subscription Terms</h3>
-            <p>PharmaFlow is offered as a subscription service. By subscribing, you agree to:</p>
+            <p>Narcotics Ledger is offered as a subscription service. By subscribing, you agree to:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Pay the monthly subscription fee as displayed at checkout (in Canadian dollars)</li>
               <li>Auto-renewal of your subscription on a monthly basis</li>
@@ -40,7 +40,7 @@ export default function Terms() {
             <p>You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account. You agree to notify us immediately of any unauthorized use of your account.</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">5. Acceptable Use</h3>
-            <p>You agree to use PharmaFlow only for lawful purposes and in accordance with these Terms. You agree not to:</p>
+            <p>You agree to use Narcotics Ledger only for lawful purposes and in accordance with these Terms. You agree not to:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Use the service for any illegal purpose</li>
               <li>Violate any international, federal, provincial, or state regulations</li>
@@ -49,7 +49,7 @@ export default function Terms() {
             </ul>
             
             <h3 className="text-lg font-semibold text-neutral-900">6. Privacy Policy</h3>
-            <p>Your use of PharmaFlow is also governed by our Privacy Policy, which describes how we collect, use, and protect your personal information.</p>
+            <p>Your use of Narcotics Ledger is also governed by our Privacy Policy, which describes how we collect, use, and protect your personal information.</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">7. Termination</h3>
             <p>We reserve the right to terminate or suspend your account at any time for violation of these Terms or for any other reason at our sole discretion.</p>
@@ -58,10 +58,10 @@ export default function Terms() {
             <p>We reserve the right to modify these terms at any time. Continued use of the service after changes constitutes acceptance of the modified terms.</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">9. Intellectual Property</h3>
-            <p>All content, features, and functionality of PharmaFlow are owned by us and are protected by international copyright, trademark, and other intellectual property laws. You may not reproduce, distribute, or create derivative works without our express written permission.</p>
+            <p>All content, features, and functionality of Narcotics Ledger are owned by us and are protected by international copyright, trademark, and other intellectual property laws. You may not reproduce, distribute, or create derivative works without our express written permission.</p>
             
             <h3 className="text-lg font-semibold text-neutral-900">10. Copyright Policy</h3>
-            <p>PharmaFlow respects the intellectual property rights of others and complies with Canadian copyright law. If you believe your copyrighted work has been copied in a way that constitutes copyright infringement, please contact us with:</p>
+            <p>Narcotics Ledger respects the intellectual property rights of others and complies with Canadian copyright law. If you believe your copyrighted work has been copied in a way that constitutes copyright infringement, please contact us with:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Your physical or electronic signature</li>
               <li>Identification of the copyrighted work claimed to have been infringed</li>
@@ -166,12 +166,12 @@ export default function Terms() {
             <p className="text-xs text-neutral-500 mb-4">These terms comply with Canadian consumer protection legislation, including the Competition Act and provincial consumer protection laws.</p>
 
             <h3 className="text-lg font-semibold text-neutral-900">Auto-Renewal Terms</h3>
-            <p>By subscribing to PharmaFlow, you agree to the following auto-renewal terms:</p>
+            <p>By subscribing to Narcotics Ledger, you agree to the following auto-renewal terms:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li><strong>Price:</strong> The subscription price will be clearly displayed at checkout in Canadian dollars</li>
               <li><strong>Duration:</strong> Subscriptions renew on a monthly basis</li>
               <li><strong>Cancellation:</strong> You may cancel at any time through your account settings</li>
-              <li><strong>Cancellation Method:</strong> Go to Settings → Subscription → Cancel Subscription</li>
+              <li><strong>Cancellation Method:</strong> Go to Settings → Subscription → Manage or cancel subscription</li>
               <li><strong>Refund Policy:</strong> No refunds for partial months; service continues until end of billing period</li>
             </ul>
 
@@ -218,7 +218,7 @@ export default function Terms() {
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
             <p><strong>For Canadian Users:</strong></p>
-            <p className="text-xs text-neutral-500 mb-4">PharmaFlow complies with Canada's Anti-Spam Legislation (CASL), S.C. 2010, c. 23.</p>
+            <p className="text-xs text-neutral-500 mb-4">Narcotics Ledger complies with Canada's Anti-Spam Legislation (CASL), S.C. 2010, c. 23.</p>
 
             <h3 className="text-lg font-semibold text-neutral-900">Commercial Electronic Messages</h3>
             <p>We may send you commercial electronic messages (CEMs) including:</p>
@@ -230,7 +230,7 @@ export default function Terms() {
             </ul>
 
             <h3 className="text-lg font-semibold text-neutral-900">Consent</h3>
-            <p>By creating an account and using PharmaFlow, you provide express consent to receive CEMs related to your account and subscription. You may withdraw consent at any time by:</p>
+            <p>By creating an account and using Narcotics Ledger, you provide express consent to receive CEMs related to your account and subscription. You may withdraw consent at any time by:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Using the unsubscribe link in any electronic message</li>
               <li>Updating your communication preferences in account settings</li>
@@ -240,7 +240,7 @@ export default function Terms() {
             <h3 className="text-lg font-semibold text-neutral-900">Identification Requirements</h3>
             <p>All CEMs we send will include:</p>
             <ul className="list-disc pl-6 space-y-1">
-              <li>Clear identification of the sender (PharmaFlow)</li>
+              <li>Clear identification of the sender (Narcotics Ledger)</li>
               <li>Contact information for the sender</li>
               <li>A functioning unsubscribe mechanism</li>
             </ul>
@@ -261,7 +261,7 @@ export default function Terms() {
             <p className="text-xs text-neutral-500 mb-4">Information regarding Quebec's Charter of the French Language (Bill 101) compliance.</p>
 
             <h3 className="text-lg font-semibold text-neutral-900">French Language Services</h3>
-            <p>PharmaFlow recognizes the importance of French language services for Quebec residents. We are committed to:</p>
+            <p>Narcotics Ledger recognizes the importance of French language services for Quebec residents. We are committed to:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Providing essential service information in French upon request</li>
               <li>Ensuring that contracts and terms can be provided in French</li>
@@ -269,7 +269,7 @@ export default function Terms() {
             </ul>
 
             <h3 className="text-lg font-semibold text-neutral-900">Current Language Availability</h3>
-            <p>Currently, PharmaFlow primarily operates in English. However, we provide:</p>
+            <p>Currently, Narcotics Ledger primarily operates in English. However, we provide:</p>
             <ul className="list-disc pl-6 space-y-1">
               <li>English interface with the ability to request French translations</li>
               <li>French language support for account setup and terms</li>

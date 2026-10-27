@@ -240,14 +240,25 @@ export function useDeleteCycle() {
   });
 }
 
+/**
+ * The flag shown while a cycle is still a local draft.
+ *
+ * Saved cycles get their flag from `update_actual_count` / `update_reconciliation_opening`
+ * in the database, so this must stay in step with them: an unexplained variance on a
+ * narcotic or controlled drug needs a second signature ('Verify'), anything else is a
+ * review item. The two used to disagree, which meant a draft showed 'Review' and then
+ * turned into 'Verify' the moment it was saved.
+ */
 export function computeFlag(
   actualCount: number | null,
   expected: number,
   schedule: string | null
 ): ReconciliationFlag {
   if (actualCount === null || actualCount === undefined) return 'Pending count';
+
   const variance = actualCount - expected;
   if (variance === 0) return 'OK';
-  // All variances are now 'Review' since we removed schedule-based classification
+
+  if (schedule === 'Narcotic' || schedule === 'Controlled') return 'Verify';
   return 'Review';
 }

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useDrugs } from '@/hooks/useDrugs';
 import {
@@ -13,13 +13,14 @@ import {
 } from '@/hooks/useReconciliation';
 import { useReconciliationDraft } from '@/hooks/useReconciliationDraft';
 import { useFileList } from '@/hooks/useFileList';
+import { useUndoableItems } from '@/hooks/useUndoableItems';
+import { useSavedCountFile } from '@/hooks/useSavedCountFile';
 import { deduplicateDinData, mergeDinData, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
 import { createPackSizeResolver, getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
-import { isSameDin, padDin } from '@/lib/din';
+import { isSameDin } from '@/lib/din';
 import { supabase } from '@/lib/supabase';
 import type {
   CycleFormData,
-  HistoryState,
   ParsedDinData,
   ReconciliationItemDraft,
 } from '@/types/reconciliation';
@@ -34,9 +35,6 @@ import { FilePreviewModal } from '@/components/reconciliation/FilePreviewModal';
 type View = 'landing' | 'table' | 'past' | 'detail';
 type Zone = 'mckesson' | 'kroll';
 type EditableField = 'opening' | 'purchased' | 'dispensed';
-
-/** Undo/redo depth for the counting table. */
-const MAX_HISTORY = 50;
 
 const EMPTY_CYCLE_FORM: CycleFormData = {
   start_date: '',
@@ -68,9 +66,7 @@ export default function Reconciliation() {
 
   // Opening balances
   const [startFromPreviousMode, setStartFromPreviousMode] = useState<'database' | 'file' | 'zero'>('zero');
-  const [savedCountFile, setSavedCountFile] = useState<File | null>(null);
-  const [savedCountDragOver, setSavedCountDragOver] = useState(false);
-  const [savedCounts, setSavedCounts] = useState<Map<string, number>>(new Map());
+  const savedCount = useSavedCountFile();
 
   // Parsed data kept for deduplication across successive uploads
   const [existingMckessonData, setExistingMckessonData] = useState<Map<string, ParsedDinData>>(new Map());
@@ -89,8 +85,6 @@ export default function Reconciliation() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkEditMode, setBulkEditMode] = useState(false);
-  const [history, setHistory] = useState<HistoryState[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [selectedItemForVerify, setSelectedItemForVerify] = useState<number | null>(null);
   const [verifyNote, setVerifyNote] = useState('');
@@ -114,43 +108,14 @@ export default function Reconciliation() {
 
   // ---------------------------------------------------------------- undo / redo
 
-  // The ref mirrors the index so several edits in one tick cannot overwrite each other.
-  const historyIndexRef = useRef(-1);
-
-  const setIndex = useCallback((value: number) => {
-    historyIndexRef.current = value;
-    setHistoryIndex(value);
-  }, []);
-
-  const recordHistory = useCallback((snapshot: ReconciliationItemDraft[]) => {
-    const currentIndex = historyIndexRef.current;
-
-    setHistory((previous) => {
-      const kept = previous.slice(0, currentIndex + 1);
-      const capped = kept.length >= MAX_HISTORY ? kept.slice(kept.length - MAX_HISTORY + 1) : kept;
-      return [...capped, { items: [...snapshot], timestamp: Date.now() }];
-    });
-
-    setIndex(Math.min(currentIndex + 1, MAX_HISTORY - 1));
-  }, [setIndex]);
-
-  const undo = useCallback(() => {
-    const current = historyIndexRef.current;
-    if (current <= 0) return;
-
-    setDraftItems([...history[current - 1].items]);
-    setIndex(current - 1);
-    toast.success('Undo successful');
-  }, [history, setIndex]);
-
-  const redo = useCallback(() => {
-    const current = historyIndexRef.current;
-    if (current >= history.length - 1) return;
-
-    setDraftItems([...history[current + 1].items]);
-    setIndex(current + 1);
-    toast.success('Redo successful');
-  }, [history, setIndex]);
+  const {
+    record: recordHistory,
+    undo,
+    redo,
+    reset: resetHistory,
+    canUndo,
+    canRedo,
+  } = useUndoableItems(setDraftItems);
 
   // ---------------------------------------------------------------- derived data
 
@@ -289,70 +254,6 @@ export default function Reconciliation() {
     toast.success('Location counts applied');
   };
 
-  // ---------------------------------------------------------------- saved count file
-
-  /** Reads the optional "saved counts" file the user supplies as an opening balance. */
-  const parseSavedCountFile = async (file: File) => {
-    try {
-      const text = await file.text();
-      const Papa = await import('papaparse');
-      const result = Papa.parse(text, { header: true });
-
-      const counts = new Map<string, number>();
-
-      for (const row of result.data as Array<Record<string, unknown>>) {
-        const rawDin = row['DIN'] ?? row['din'] ?? row['Drug Identification Number'] ?? row['Drug ID'];
-        const rawActual = row['Actual'] ?? row['actual'] ?? row['ACTUAL'] ?? row['actual_count'];
-        if (!rawDin || !rawActual) continue;
-
-        const din = padDin(rawDin);
-        const count = parseInt(String(rawActual).trim(), 10);
-
-        if (din && !isNaN(count) && count > 0) counts.set(din, count);
-      }
-
-      setSavedCounts(counts);
-
-      if (counts.size === 0) {
-        toast.error('No valid counts found in saved count file. Please ensure the file has "DIN" and "Actual" columns.');
-      } else {
-        toast.success(`Loaded ${counts.size} saved counts from file`);
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to parse saved count file');
-    }
-  };
-
-  const handleSavedCountDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const file = event.dataTransfer.files?.[0];
-    if (!file) return;
-
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext !== 'csv' && ext !== 'xlsx' && ext !== 'xls') {
-      toast.error('Saved count file must be .csv, .xlsx, or .xls');
-      return;
-    }
-
-    setSavedCountFile(file);
-    setSavedCountDragOver(false);
-    void parseSavedCountFile(file);
-  };
-
-  const handleSavedCountSelect = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setSavedCountFile(file);
-    void parseSavedCountFile(file);
-  };
-
-  const handleSavedCountClear = () => {
-    setSavedCountFile(null);
-    setSavedCounts(new Map());
-  };
-
   // ---------------------------------------------------------------- import
 
   const handleProcessFiles = async () => {
@@ -413,7 +314,12 @@ export default function Reconciliation() {
         return;
       }
 
-      const openingBalances = await resolveOpeningBalances(startFromPreviousMode, cycles ?? [], savedCounts, merged);
+      const openingBalances = await resolveOpeningBalances(
+        startFromPreviousMode,
+        cycles ?? [],
+        savedCount.counts,
+        merged
+      );
 
       const items: ReconciliationItemDraft[] = [];
       for (const [din, data] of merged) {
@@ -445,6 +351,9 @@ export default function Reconciliation() {
 
       items.sort((a, b) => a.din.localeCompare(b.din));
       setDraftItems(items);
+      // A fresh import replaces the draft wholesale, so the previous undo stack must not
+      // survive it — undo would otherwise restore counts from an unrelated cycle.
+      resetHistory();
 
       const skippedMsg = skippedCount > 0 ? ` (${skippedCount} duplicate transactions skipped)` : '';
       toast.success(
@@ -476,10 +385,11 @@ export default function Reconciliation() {
     setExistingDateRange(null);
     setSkippedDuplicates(0);
     setDraftItems([]);
+    resetHistory();
     mckesson.clear();
     kroll.clear();
     setFilePreviews({ mckesson: [], kroll: [] });
-    handleSavedCountClear();
+    savedCount.clear();
     setStartFromPreviousMode('zero');
   };
 
@@ -578,8 +488,8 @@ export default function Reconciliation() {
           startFromPreviousMode={startFromPreviousMode}
           drugCount={drugs?.length ?? 0}
           packedDrugCount={(drugs ?? []).filter((drug) => drug.pack_size > 1).length}
-          savedCountFile={savedCountFile}
-          savedCountDragOver={savedCountDragOver}
+          savedCountFile={savedCount.file}
+          savedCountDragOver={savedCount.dragOver}
           hasExistingData={existingMckessonData.size > 0 || existingKrollData.size > 0}
           onDrop={(event, name) => zone(name).handleDrop(event)}
           onDragOver={(event, name) => {
@@ -590,14 +500,14 @@ export default function Reconciliation() {
           onFileSelect={(event, name) => zone(name).handleSelect(event)}
           onRemoveFile={(index, name) => zone(name).remove(index)}
           onClearAllFiles={(name) => zone(name).clear()}
-          onSavedCountDrop={handleSavedCountDrop}
+          onSavedCountDrop={savedCount.handleDrop}
           onSavedCountDragOver={(event) => {
             event.preventDefault();
-            setSavedCountDragOver(true);
+            savedCount.setDragOver(true);
           }}
-          onSavedCountDragLeave={() => setSavedCountDragOver(false)}
-          onSavedCountSelect={handleSavedCountSelect}
-          onSavedCountClear={handleSavedCountClear}
+          onSavedCountDragLeave={() => savedCount.setDragOver(false)}
+          onSavedCountSelect={savedCount.handleSelect}
+          onSavedCountClear={savedCount.clear}
           onProcess={handleProcessFiles}
           onViewPast={() => setView('past')}
           onClearAll={handleClearAndReset}
@@ -642,8 +552,8 @@ export default function Reconciliation() {
           onBulkEdit={handleBulkEdit}
           onUndo={undo}
           onRedo={redo}
-          canUndo={historyIndex > 0}
-          canRedo={historyIndex < history.length - 1}
+          canUndo={canUndo}
+          canRedo={canRedo}
           onVerifyItem={handleVerifyItem}
           verifyModalOpen={verifyModalOpen}
           onCloseVerifyModal={() => {

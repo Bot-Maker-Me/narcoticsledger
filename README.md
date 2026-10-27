@@ -15,7 +15,7 @@ expected vs. actual counts, and keep an audit-ready ledger of every transaction.
 | UI | React 18 + TypeScript + Vite 5 (single-page app, no server layer) |
 | Routing | React Router v7 — all routes declared in `src/App.tsx` |
 | Server state | TanStack React Query v5 |
-| Backend | Supabase (Postgres, Auth, RPCs, Storage, Edge Functions) |
+| Backend | Supabase (Postgres, Auth, RPCs, Edge Functions) |
 | Styling | Tailwind CSS v3 (custom dark theme) |
 | Charts | Recharts (lazy-loaded with the Reports route) |
 | Files | PapaParse (CSV) + SheetJS (XLSX/XLS, loaded on demand) |
@@ -23,6 +23,7 @@ expected vs. actual counts, and keep an audit-ready ledger of every transaction.
 | Icons / toasts / motion | `lucide-react`, `react-hot-toast`, `framer-motion` |
 
 For the full library and design-system rules, see [`AI_RULES.md`](./AI_RULES.md).
+For the database, see [`docs/database-schema.md`](./docs/database-schema.md).
 
 ## Getting started
 
@@ -37,8 +38,6 @@ Required environment variables (front-end only, `VITE_`-prefixed and public-safe
 ```
 VITE_SUPABASE_URL=...
 VITE_SUPABASE_ANON_KEY=...
-# optional, used by the Stripe checkout flow
-VITE_STRIPE_PUBLISHABLE_KEY=...
 ```
 
 Only the **anon** key belongs in the browser. Never put a service-role key in `.env`
@@ -54,6 +53,21 @@ or anywhere under `src/`.
 | `npm run typecheck` | Type-check with `tsc` |
 | `npm run lint` | ESLint |
 | `npm run test` | Vitest |
+
+### Edge function secrets
+
+Set these in the Supabase dashboard under **Edge Functions → Manage Secrets**. They are
+server-side only and never reach the browser:
+
+| Secret | Used by | Notes |
+| --- | --- | --- |
+| `STRIPE_SECRET_KEY` | `stripe-checkout`, `stripe-portal`, `stripe-webhook` | Server key. |
+| `STRIPE_WEBHOOK_SECRET` | `stripe-webhook` | Verifies the signature. |
+| `APP_URL` | all `stripe-*` functions | Absolute app URL used for redirects, e.g. `https://app.example.com`. When unset the request origin is used. |
+| `ALLOWED_ORIGINS` | all functions | Optional comma-separated CORS allowlist. Unset echoes the requesting origin. |
+
+`SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are provided
+automatically.
 
 ## Project structure
 
@@ -74,6 +88,8 @@ src/
                           #   format.ts     money and byte formatting
                           #   access.ts     subscription/trial gating
                           #   ledgerDate.ts calendar-day parsing (timezone-safe)
+                          #   errors.ts     error messages + reporting
+                          #   reports.ts    report rows, columns and date window
                           #   fileParser.ts supplier export parsing
                           #   dinReference.ts  CDSA/DPD lookup service
                           #   exportUtils.ts   CSV/PDF export
@@ -81,9 +97,10 @@ src/
                           #   supabase.ts      the single Supabase client
   pages/                  # Routed pages (thin wrappers around feature components)
   types/                  # Domain types only — no runtime code
+docs/database-schema.md   # The real schema, table by table
 supabase/
-  migrations/             # Source of truth for the schema
-  functions/              # Edge functions (din-reference, stripe-checkout, stripe-webhook)
+  migrations/             # HISTORICAL — see "Database schema" below
+  functions/              # din-reference, stripe-checkout, stripe-webhook, stripe-portal
 scripts/legacy-sql/       # HISTORICAL one-off SQL — not run automatically
 ```
 
@@ -110,23 +127,47 @@ scripts/legacy-sql/       # HISTORICAL one-off SQL — not run automatically
   policies scoped to `auth.uid()`. Access control is enforced in the database, not in the
   client. Grant API access (to `authenticated`, and `service_role` for trusted server code)
   separately from RLS — they are two layers.
-- **Auth.** Supabase Auth with a signup trigger that creates a `profiles` row. Route
-  guards (`ProtectedRoute`, `AdminRoute`) plus `hasAccess` handle the paywall/trial gate.
+- **Drug rows are per-pharmacy.** `drugs` is unique on `(user_id, din)` and readable only by
+  its owner, so one pharmacy's catalogue is invisible to another. Imports create the
+  caller's own row rather than sharing one.
+- **The ledger is append-only.** `authenticated` has only `SELECT` and `INSERT` on
+  `inventory_transactions`. Removing an imported file **voids** its rows
+  (`void_imported_records`, which sets `voided_at`/`voided_by`) instead of deleting them, so
+  the audit trail always survives. Voided rows are excluded from stock maths and the record
+  browsers but stay visible in Transaction History.
+- **Privileged work goes through `SECURITY DEFINER` RPCs.** Dispensing, stock adjustments,
+  voiding and every admin action re-check ownership or the admin role inside Postgres
+  (`public.is_admin()`), never from client-supplied identity.
+- **Auth.** Supabase Auth with a signup trigger that creates a `profiles` row. Route guards
+  (`ProtectedRoute`, `AdminRoute`) plus `hasAccess` handle the paywall/trial gate.
+  Password recovery and email confirmation come back through `/reset-password` and
+  `/auth/callback`, which are deliberately public routes.
+- **Billing is server-authoritative.** The price always comes from `system_settings` on the
+  server; the browser never sends an amount. The webhook verifies the Stripe signature in
+  constant time, is idempotent via `stripe_events`, and binds the payer with
+  `client_reference_id`. Subscriptions are cancelled through the Stripe billing portal.
 - **Edge functions.** `din-reference` resolves CDSA/DPD product names and schedules
-  server-side so reference data is never shipped to the browser; the `stripe-*` functions
-  handle billing. Edge functions run with `verify_jwt: false`, so privileged paths must
-  verify the caller's JWT and keep the service-role key server-side only.
+  server-side so reference data is never shipped to the browser. Edge functions run with
+  `verify_jwt: false`, so every function verifies the caller's JWT itself and keeps the
+  service-role key server-side only.
 - **Validation at the boundary.** Validate/sanitise user input (including imported files)
-  before inserting, and always handle the `error` returned by Supabase calls.
+  before inserting, and always handle the `error` returned by Supabase calls. Nothing
+  swallows a failure silently — see `src/lib/errors.ts`.
 
-## Database: migrations vs. legacy SQL
+## Database schema
 
-- **`supabase/migrations/` is the source of truth.** Apply schema changes by adding a new
-  migration (or running SQL through the Supabase SQL editor) — do **not** write new files
-  into `scripts/legacy-sql/`.
-- **`scripts/legacy-sql/`** holds historical one-off fix scripts that used to live in the
-  repo root. They are kept for audit history only and must be reviewed before ever being
-  run against a real database. See [`scripts/legacy-sql/README.md`](./scripts/legacy-sql/README.md).
+**The live database is the source of truth, not `supabase/migrations/`.** Those migration
+files are generated by an external tool and had drifted far from the deployed project
+(missing tables, columns that never existed, and objects that were never applied), so they
+are kept only as history. [`docs/database-schema.md`](./docs/database-schema.md) describes
+what is actually deployed, table by table and function by function.
+
+**Apply schema changes with SQL against the project** (Supabase SQL editor, or the SQL tool
+in your editor). Do not hand-write new files into `supabase/migrations/`, and do not add
+scripts to `scripts/legacy-sql/` — see
+[`scripts/legacy-sql/README.md`](./scripts/legacy-sql/README.md).
+
+When you change the schema, update `docs/database-schema.md` in the same change.
 
 ### Never commit
 

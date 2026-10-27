@@ -1,9 +1,10 @@
 import { Users, CheckCircle2, Clock, Activity, AlertTriangle, Loader2 } from 'lucide-react';
 import { useSystemHealth, useAuditLogs } from '@/hooks/useAdmin';
 import { formatDate } from '@/lib/dates';
+import { getErrorMessage } from '@/lib/errors';
 
 export function HealthTab() {
-  const { data: health, isLoading } = useSystemHealth();
+  const { data: health, isLoading, isError, error, refetch } = useSystemHealth();
   const { data: auditLogs } = useAuditLogs();
 
   const stats = [
@@ -19,6 +20,19 @@ export function HealthTab() {
       <div className="card p-12 text-center">
         <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-300" />
         <p className="mt-3 text-sm text-neutral-400">Loading health data...</p>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="card p-12 text-center">
+        <AlertTriangle className="mx-auto h-10 w-10 text-error-300" />
+        <p className="mt-3 text-sm text-neutral-500">Failed to load system health</p>
+        <p className="mt-1 text-xs text-neutral-400">{getErrorMessage(error)}</p>
+        <button onClick={() => refetch()} className="btn-secondary mt-3">
+          Try again
+        </button>
       </div>
     );
   }

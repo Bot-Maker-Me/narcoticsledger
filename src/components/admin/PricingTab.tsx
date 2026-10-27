@@ -3,6 +3,7 @@ import { DollarSign, Save, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useSystemSettings, useUpdatePricing } from '@/hooks/useAdmin';
 import { formatPrice } from '@/lib/format';
+import { getErrorMessage } from '@/lib/errors';
 
 export function PricingTab() {
   const { data: settings, isLoading } = useSystemSettings();
@@ -43,8 +44,7 @@ export function PricingTab() {
       await updateMutation.mutateAsync({ priceCents, trialDays: days });
       toast.success('Pricing updated');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update pricing';
-      toast.error(message);
+      toast.error(getErrorMessage(err, 'Failed to update pricing'));
     }
   };
 
@@ -62,7 +62,7 @@ export function PricingTab() {
         <div className="mt-6 space-y-4">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-neutral-700">
-              Monthly Subscription Price (USD)
+              Monthly Subscription Price (CAD)
             </label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-neutral-400">$</span>

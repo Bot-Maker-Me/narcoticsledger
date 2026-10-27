@@ -5,9 +5,10 @@ import toast from 'react-hot-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import SectionMarker from '@/components/SectionMarker';
+import { getErrorMessage } from '@/lib/errors';
 
 export default function Login() {
-  const { signIn } = useAuth();
+  const { signIn, resetPassword } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/dashboard';
@@ -16,6 +17,24 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [submitting, setSubmitting] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
+
+  const handleForgotPassword = async () => {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setErrors((previous) => ({ ...previous, email: 'Enter your email address first' }));
+      return;
+    }
+
+    setSendingReset(true);
+    try {
+      await resetPassword(email);
+      toast.success(`Password reset link sent to ${email}`);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Failed to send the reset link'));
+    } finally {
+      setSendingReset(false);
+    }
+  };
 
   const validate = () => {
     const next: { email?: string; password?: string } = {};
@@ -95,9 +114,19 @@ export default function Login() {
               </div>
 
               <div>
-                <label htmlFor="password" className="field-label">
-                  Password
-                </label>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="password" className="field-label">
+                    Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    disabled={sendingReset}
+                    className="mb-1.5 text-xs font-medium text-primary-500 transition-colors hover:text-primary-700 disabled:opacity-50"
+                  >
+                    {sendingReset ? 'Sending...' : 'Forgot password?'}
+                  </button>
+                </div>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
                   <input

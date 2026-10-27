@@ -1,13 +1,22 @@
 import { useState, useMemo } from 'react';
-import { Download, FileText, Calendar, Scale, Package, TrendingUp, Filter, Printer, ChevronDown, BarChart3, PieChart } from 'lucide-react';
+import { Download, FileText, Calendar, Scale, Package, Filter, Printer, PieChart } from 'lucide-react';
 import { useDrugs } from '@/hooks/useDrugs';
 import { usePrescriptions } from '@/hooks/usePrescriptions';
-import { useReconciliationCycles } from '@/hooks/useReconciliation';
-import { useAllReconciliationItems } from '@/hooks/useReconciliation';
-import { exportToCSV } from '@/lib/exportUtils';
+import { useReconciliationCycles, useAllReconciliationItems } from '@/hooks/useReconciliation';
+import {
+  rangeStart,
+  reportHeaders,
+  reportRecordCount,
+  reportRows,
+  scheduleSlices,
+  withinRange,
+  type ReportCsvRow,
+  type ReportDataSets,
+  type ReportRange,
+  type ReportType,
+} from '@/lib/reports';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 import { motion } from 'framer-motion';
-import type { ReconciliationItemDraft } from '@/types/reconciliation';
 import SectionMarker from '@/components/SectionMarker';
 
 const chartTooltip = {
@@ -21,8 +30,6 @@ const chartTooltip = {
   itemStyle: { color: '#B4BCCC' },
 };
 
-type ReportType = 'inventory' | 'dispensing' | 'reconciliation' | 'prescription' | 'schedule';
-
 export default function Reports() {
   const { data: drugs } = useDrugs();
   const { data: prescriptions } = usePrescriptions();
@@ -30,8 +37,12 @@ export default function Reports() {
   const { data: allReconciliationItems } = useAllReconciliationItems();
 
   const [selectedReport, setSelectedReport] = useState<ReportType>('inventory');
-  const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
+  const [dateRange, setDateRange] = useState<ReportRange>('30d');
   const [showFilters, setShowFilters] = useState(false);
+
+  // The window the dated reports are narrowed to. Inventory is a live snapshot with no date
+  // of its own, so it is deliberately left unfiltered.
+  const windowStart = useMemo(() => rangeStart(dateRange), [dateRange]);
 
   // Prepare data for different reports
   const inventoryData = useMemo(() => {
@@ -48,48 +59,48 @@ export default function Reports() {
 
   const dispensingData = useMemo(() => {
     if (!prescriptions) return [];
-    return prescriptions.filter(p => p.status === 'active' || p.status === 'completed').map(rx => ({
-      patientName: rx.patient_name,
-      drugDescription: rx.drug_description,
-      drugDIN: rx.drug_din,
-      quantityPrescribed: rx.quantity_prescribed,
-      quantityDispensed: rx.quantity_dispensed,
-      prescriber: rx.prescriber,
-      status: rx.status,
-      createdAt: rx.created_at,
-    }));
-  }, [prescriptions]);
+    return prescriptions
+      .filter(p => p.status === 'active' || p.status === 'completed')
+      .filter(rx => withinRange(rx.created_at, windowStart))
+      .map(rx => ({
+        patientName: rx.patient_name,
+        drugDescription: rx.drug_description,
+        drugDIN: rx.drug_din,
+        quantityPrescribed: rx.quantity_prescribed,
+        quantityDispensed: rx.quantity_dispensed,
+        prescriber: rx.prescriber,
+        status: rx.status,
+        createdAt: rx.created_at,
+      }));
+  }, [prescriptions, windowStart]);
 
   const reconciliationData = useMemo(() => {
     if (!allReconciliationItems) return [];
-    return allReconciliationItems.map(item => ({
-      din: item.din,
-      description: item.description || 'Unknown',
-      schedule: item.schedule || 'Unknown',
-      openingBalance: item.opening_balance,
-      purchasedCount: item.purchased_count,
-      dispensedCount: item.dispensed_count,
-      actualCount: item.actual_count,
-      flag: item.flag,
-      cycleDate: item.cycle_created_at,
-    }));
-  }, [allReconciliationItems]);
+    return allReconciliationItems
+      .filter(item => withinRange(item.cycle_created_at, windowStart))
+      .map(item => ({
+        din: item.din,
+        description: item.description || 'Unknown',
+        schedule: item.schedule || 'Unknown',
+        openingBalance: item.opening_balance,
+        purchasedCount: item.purchased_count,
+        dispensedCount: item.dispensed_count,
+        actualCount: item.actual_count,
+        flag: item.flag,
+        cycleDate: item.cycle_created_at,
+      }));
+  }, [allReconciliationItems, windowStart]);
 
-  const scheduleDistribution = useMemo(() => {
-    if (!drugs) return [];
-    const scheduleCounts = drugs.reduce((acc, drug) => {
-      acc[drug.schedule] = (acc[drug.schedule] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+  const scheduleDistribution = useMemo(() => scheduleSlices(inventoryData), [inventoryData]);
 
-    const colors = ['#E85A5A', '#8E9FC4', '#D6A85F', '#7BA88B', '#6B7DA6'];
-    
-    return Object.entries(scheduleCounts).map(([name, value], index) => ({
-      name,
-      value,
-      color: colors[index % colors.length],
-    }));
-  }, [drugs]);
+  const reportSets = useMemo<ReportDataSets>(
+    () => ({
+      inventory: inventoryData,
+      dispensing: dispensingData,
+      reconciliation: reconciliationData,
+    }),
+    [inventoryData, dispensingData, reconciliationData]
+  );
 
   const inventoryTrends = useMemo(() => {
     if (!drugs) return [];
@@ -105,7 +116,7 @@ export default function Reports() {
   }, [drugs]);
 
   const handleExportCSV = () => {
-    let data: any[] = [];
+    let data: ReportCsvRow[] = [];
     let filename = 'report.csv';
 
     switch (selectedReport) {
@@ -200,7 +211,7 @@ export default function Reports() {
               <label className="mb-1.5 block text-sm font-medium text-neutral-700">Date Range</label>
               <select
                 value={dateRange}
-                onChange={(e) => setDateRange(e.target.value as '7d' | '30d' | '90d' | 'all')}
+                onChange={(e) => setDateRange(e.target.value as ReportRange)}
                 className="input-field"
               >
                 <option value="7d">Last 7 days</option>
@@ -210,9 +221,10 @@ export default function Reports() {
               </select>
             </div>
             <div className="flex items-end">
-              <button className="btn-primary w-full">
-                Apply Filters
-              </button>
+              <p className="text-xs text-neutral-500">
+                Dated reports apply this window immediately. The controlled substance inventory log is
+                a live snapshot, so it is not date-filtered.
+              </p>
             </div>
           </div>
         </motion.div>
@@ -261,7 +273,7 @@ export default function Reports() {
               {getReportTitle(selectedReport)}
             </h2>
             <span className="text-sm text-neutral-500">
-              {getRecordCount(selectedReport, inventoryData, dispensingData, reconciliationData)} records
+              {reportRecordCount(selectedReport, reportSets)} records
             </span>
           </div>
 
@@ -269,7 +281,7 @@ export default function Reports() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-neutral-100 bg-neutral-50/50">
-                  {getReportHeaders(selectedReport).map((header, i) => (
+                  {reportHeaders(selectedReport).map((header, i) => (
                     <th key={i} className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">
                       {header}
                     </th>
@@ -277,7 +289,7 @@ export default function Reports() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-50">
-                {getReportData(selectedReport, inventoryData, dispensingData, reconciliationData).map((row, i) => (
+                {reportRows(selectedReport, reportSets).map((row, i) => (
                   <tr key={i} className="transition-colors hover:bg-neutral-50/50">
                     {Object.values(row).map((cell, j) => (
                       <td key={j} className="px-3 py-2.5 text-sm text-neutral-700">
@@ -431,103 +443,4 @@ function getReportTitle(type: ReportType): string {
     schedule: 'Schedule Distribution',
   };
   return titles[type];
-}
-
-function getReportHeaders(type: ReportType): string[] {
-  const headers = {
-    inventory: ['DIN', 'Description', 'Schedule', 'Current Stock', 'Reorder Level', 'Pack Size'],
-    dispensing: ['Patient Name', 'Drug', 'DIN', 'Prescribed', 'Dispensed', 'Status', 'Date'],
-    reconciliation: ['DIN', 'Description', 'Schedule', 'Opening', 'Purchased', 'Dispensed', 'Actual', 'Flag'],
-    prescription: ['Patient Name', 'Drug', 'DIN', 'Prescriber', 'Prescribed', 'Dispensed', 'Status'],
-    schedule: ['Schedule', 'Count', 'Percentage'],
-  };
-  return headers[type];
-}
-
-function getReportData(
-  type: ReportType,
-  inventoryData: any[],
-  dispensingData: any[],
-  reconciliationData: any[]
-): any[] {
-  switch (type) {
-    case 'inventory':
-      return inventoryData.slice(0, 20).map(item => ({
-        din: item.din,
-        description: item.description,
-        schedule: item.schedule,
-        currentStock: item.currentStock,
-        reorderLevel: item.reorderLevel,
-        packSize: item.packSize,
-      }));
-    case 'dispensing':
-      return dispensingData.slice(0, 20).map(item => ({
-        patientName: item.patientName,
-        drugDescription: item.drugDescription,
-        drugDIN: item.drugDIN,
-        quantityPrescribed: item.quantityPrescribed,
-        quantityDispensed: item.quantityDispensed,
-        status: item.status,
-        createdAt: new Date(item.createdAt).toLocaleDateString(),
-      }));
-    case 'reconciliation':
-      return reconciliationData.slice(0, 20).map(item => ({
-        din: item.din,
-        description: item.description,
-        schedule: item.schedule,
-        openingBalance: item.openingBalance,
-        purchasedCount: item.purchasedCount,
-        dispensedCount: item.dispensedCount,
-        actualCount: item.actualCount ?? '—',
-        flag: item.flag,
-      }));
-    case 'prescription':
-      return dispensingData.slice(0, 20).map(item => ({
-        patientName: item.patientName,
-        drugDescription: item.drugDescription,
-        drugDIN: item.drugDIN,
-        prescriber: item.prescriber,
-        quantityPrescribed: item.quantityPrescribed,
-        quantityDispensed: item.quantityDispensed,
-        status: item.status,
-      }));
-    case 'schedule':
-      const total = inventoryData.length;
-      const scheduleCounts = inventoryData.reduce((acc, item) => {
-        acc[item.schedule] = (acc[item.schedule] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-      return (Object.entries(scheduleCounts) as [string, number][]).map(([schedule, count]) => ({
-        schedule,
-        count,
-        percentage: ((count / total) * 100).toFixed(1) + '%',
-      }));
-    default:
-      return [];
-  }
-}
-
-function getRecordCount(
-  type: ReportType,
-  inventoryData: any[],
-  dispensingData: any[],
-  reconciliationData: any[]
-): number {
-  switch (type) {
-    case 'inventory':
-      return inventoryData.length;
-    case 'dispensing':
-    case 'prescription':
-      return dispensingData.length;
-    case 'reconciliation':
-      return reconciliationData.length;
-    case 'schedule':
-      const scheduleCounts = inventoryData.reduce((acc, item) => {
-        acc[item.schedule] = (acc[item.schedule] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-      return Object.keys(scheduleCounts).length;
-    default:
-      return 0;
-  }
 }
