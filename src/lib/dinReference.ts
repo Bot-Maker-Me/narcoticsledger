@@ -146,8 +146,6 @@ export async function fetchReferenceEntries(dins: Array<string | null | undefine
   for (const key of keys) {
     if (!cache.has(key)) cache.set(key, getDinReferenceEntry(key));
   }
-
-  console.log(`[din-reference] resolved ${rows.length} of ${keys.length} requested DINs`);
 }
 
 /**

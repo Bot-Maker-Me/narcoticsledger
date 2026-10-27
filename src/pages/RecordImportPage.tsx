@@ -126,8 +126,6 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
 
     setParsing(true);
     try {
-      console.log(`Starting to process ${files.length} files...`);
-
       // Quantities are converted to total units via each drug record's Pack Size.
       const packSizeFor = createPackSizeResolver(drugs ?? []);
 
@@ -138,7 +136,6 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
 
       // Process all files
       for (const file of files) {
-        console.log(`Processing file: ${file.name}`);
         const { data, preview } = await parseSingleFileWithPreview(file, meta.parseSource, seenSignatures, packSizeFor);
 
         for (const [din, itemData] of data) {
@@ -157,11 +154,6 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
 
         if (preview) previews.push(preview);
       }
-
-      console.log('All files parsed successfully', { 
-        dataSize: allData.size, 
-        files: files.length 
-      });
 
       // Set previews and show modal
       setFilePreviews(previews);

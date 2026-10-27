@@ -2,6 +2,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import type { AdminUser, SystemSettings, SystemHealth, AuditLog } from '@/types/admin';
 
+const DEFAULT_SETTINGS: SystemSettings = {
+  id: 1,
+  subscription_price_cents: 2900,
+  trial_days: 14,
+  updated_at: new Date().toISOString(),
+};
+
 async function fetchSystemSettings(): Promise<SystemSettings> {
   try {
     const { data, error } = await supabase
@@ -9,38 +16,22 @@ async function fetchSystemSettings(): Promise<SystemSettings> {
       .select('*')
       .eq('id', 1)
       .single();
-    
+
     if (error) {
       console.error('Error fetching system settings:', error);
-      // Return default settings if table doesn't exist
-      console.log('Using default system settings');
-      return {
-        id: 1,
-        subscription_price_cents: 2900,
-        trial_days: 14,
-        updated_at: new Date().toISOString(),
-      };
+      // Fall back to defaults if the table does not exist.
+      return DEFAULT_SETTINGS;
     }
-    
+
     return data;
   } catch (error) {
     console.error('Error in fetchSystemSettings:', error);
-    // Return default settings
-    console.log('Using default system settings due to error');
-    return {
-      id: 1,
-      subscription_price_cents: 2900,
-      trial_days: 14,
-      updated_at: new Date().toISOString(),
-    };
+    return DEFAULT_SETTINGS;
   }
 }
 
 async function fetchAdminUsers(): Promise<AdminUser[]> {
   try {
-    console.log('Attempting to fetch admin users...');
-    
-    // Try public users table first
     const { data, error } = await supabase
       .from('users')
       .select('id, email, role, subscription_status, trial_ends_at, created_at')
@@ -49,14 +40,10 @@ async function fetchAdminUsers(): Promise<AdminUser[]> {
 
     if (error) {
       console.error('Public users table error:', error);
-      // Return empty array instead of throwing error
-      console.log('Users table might not exist, returning empty array');
       return [];
     }
 
-    console.log(`Successfully fetched ${data?.length || 0} users from public table`);
-    
-    return (data ?? []).map(user => ({
+    return (data ?? []).map((user) => ({
       id: user.id,
       email: user.email,
       role: user.role || 'user',
@@ -66,33 +53,27 @@ async function fetchAdminUsers(): Promise<AdminUser[]> {
     }));
   } catch (error) {
     console.error('Error in fetchAdminUsers:', error);
-    // Return empty array instead of throwing error
     return [];
   }
 }
 
 async function fetchSystemHealth(): Promise<SystemHealth> {
   try {
-    console.log('Fetching system health...');
-    
-    // Simple fallback to avoid RPC dependency
+    // Simple fallback to avoid RPC dependency.
     const { data: users, error: usersError } = await supabase
       .from('users')
       .select('id, subscription_status, trial_ends_at');
-    
+
     let totalUsers = 0;
     let activeSubscriptions = 0;
     let trialingUsers = 0;
 
     if (!usersError && users) {
       totalUsers = users.length;
-      activeSubscriptions = users.filter(u => u.subscription_status === 'active').length;
-      trialingUsers = users.filter(u => u.subscription_status === 'trialing').length;
-    } else {
-      console.log('Users table error in health check:', usersError);
+      activeSubscriptions = users.filter((u) => u.subscription_status === 'active').length;
+      trialingUsers = users.filter((u) => u.subscription_status === 'trialing').length;
     }
 
-    // Get active cycles count
     let activeCycles = 0;
     const { count, error: cyclesError } = await supabase
       .from('reconciliation_cycles')
@@ -101,8 +82,6 @@ async function fetchSystemHealth(): Promise<SystemHealth> {
 
     if (!cyclesError && count) {
       activeCycles = count;
-    } else {
-      console.log('Cycles table error in health check:', cyclesError);
     }
 
     return {
@@ -114,7 +93,6 @@ async function fetchSystemHealth(): Promise<SystemHealth> {
     };
   } catch (error) {
     console.error('Error in fetchSystemHealth:', error);
-    // Return default values instead of throwing error
     return {
       total_users: 0,
       active_subscriptions: 0,
@@ -127,9 +105,7 @@ async function fetchSystemHealth(): Promise<SystemHealth> {
 
 async function fetchAuditLogs(): Promise<AuditLog[]> {
   try {
-    console.log('Fetching audit logs...');
-    
-    // Simple fallback - return empty array if audit_logs table doesn't exist
+    // Returns an empty list when the audit_logs table is not present.
     const { data, error } = await supabase
       .from('audit_logs')
       .select('*')
@@ -137,20 +113,18 @@ async function fetchAuditLogs(): Promise<AuditLog[]> {
       .limit(50);
 
     if (error) {
-      console.log('Audit logs table might not exist:', error);
-      return []; // Return empty array instead of throwing error
+      return [];
     }
 
     return data ?? [];
   } catch (error) {
-    console.log('Error in fetchAuditLogs:', error);
-    return []; // Return empty array instead of throwing error
+    console.error('Error in fetchAuditLogs:', error);
+    return [];
   }
 }
 
 async function extendTrial(userId: string, days: number): Promise<void> {
   try {
-    // Calculate new trial end date
     const { data: user, error: fetchError } = await supabase
       .from('users')
       .select('trial_ends_at')
@@ -167,9 +141,9 @@ async function extendTrial(userId: string, days: number): Promise<void> {
 
     const { error } = await supabase
       .from('users')
-      .update({ 
+      .update({
         trial_ends_at: newEnd.toISOString(),
-        subscription_status: 'trialing'
+        subscription_status: 'trialing',
       })
       .eq('id', userId);
 
@@ -221,9 +195,9 @@ async function updatePricing(priceCents: number, trialDays: number): Promise<voi
   try {
     const { error } = await supabase
       .from('system_settings')
-      .update({ 
+      .update({
         subscription_price_cents: priceCents,
-        trial_days: trialDays
+        trial_days: trialDays,
       })
       .eq('id', 1);
 

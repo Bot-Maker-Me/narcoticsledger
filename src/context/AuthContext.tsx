@@ -54,13 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     (async () => {
-      console.log('Loading profile for user:', session.user.id);
-
       const { data, error } = await supabase.rpc('get_my_profile');
       if (!mounted) return;
 
       if (!error && data) {
-        console.log('Profile loaded from RPC:', data);
         setProfile(data as Profile);
         setLoading(false);
         return;
@@ -76,7 +73,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!mounted) return;
 
       if (existing) {
-        console.log('Profile loaded from table:', existing);
         setProfile(existing as Profile);
         setLoading(false);
         return;
@@ -98,22 +94,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signUp = async (email: string, password: string, pharmacyName?: string) => {
-    console.log('Attempting to sign up:', email, 'pharmacy:', pharmacyName);
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/`,
         data: {
-          pharmacy_name: pharmacyName || 'My Pharmacy'
-        }
-      }
+          pharmacy_name: pharmacyName || 'My Pharmacy',
+        },
+      },
     });
     if (error) {
       console.error('Signup error:', error);
       throw error;
     }
-    console.log('Signup successful:', data);
 
     // Update profile with pharmacy name after signup
     if (data.user && pharmacyName) {

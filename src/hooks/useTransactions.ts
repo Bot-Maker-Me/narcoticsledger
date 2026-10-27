@@ -22,8 +22,6 @@ async function fetchTransactions(params: FetchParams): Promise<{
   const to = from + PAGE_SIZE - 1;
 
   try {
-    console.log('Fetching transactions with params:', { page, search, type, source, startDate, endDate });
-
     // If there's a search term, first find matching drug IDs
     let matchingDrugIds: string[] | null = null;
     if (search) {
@@ -38,7 +36,6 @@ async function fetchTransactions(params: FetchParams): Promise<{
       }
 
       matchingDrugIds = drugsData?.map(d => d.id) ?? [];
-      console.log(`Found ${matchingDrugIds.length} matching drugs for search: "${search}"`);
 
       // If no drugs match, return empty result immediately
       if (matchingDrugIds.length === 0) {
@@ -87,8 +84,6 @@ async function fetchTransactions(params: FetchParams): Promise<{
       console.error('Transaction fetch error:', error);
       throw error;
     }
-
-    console.log(`Successfully fetched ${data?.length || 0} transactions, total count: ${count}`);
 
     return {
       data: (data ?? []).map((row) => {

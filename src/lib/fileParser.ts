@@ -87,7 +87,6 @@ function findMatchingDin(din: string, dataset: Map<string, ParsedDinData>): stri
   for (let length = cleaned.length; length <= 8; length++) {
     const padded = cleaned.padStart(length, '0');
     if (dataset.has(padded)) {
-      console.log(`DIN ${din} matched to ${padded} via progressive padding`);
       return padded;
     }
   }
@@ -96,7 +95,6 @@ function findMatchingDin(din: string, dataset: Map<string, ParsedDinData>): stri
   for (let length = 8; length >= cleaned.length; length--) {
     const truncated = din.slice(8 - length);
     if (dataset.has(truncated)) {
-      console.log(`DIN ${din} matched to ${truncated} via zero removal`);
       return truncated;
     }
   }
@@ -343,9 +341,6 @@ function aggregateRows(
   const packSizeKey = findColumnKey(keys, PACK_SIZE_COLUMNS);
 
   const result = new Map<string, ParsedDinData>();
-  let skippedCount = 0;
-  let convertedCount = 0;
-  let noPackSizeCount = 0;
 
   for (const row of rows) {
     const din = normalizeDin(String(row[dinKey] ?? ''));
@@ -366,8 +361,6 @@ function aggregateRows(
     if (seenSignatures) {
       const signature = generateRowSignature(din, qty, date, row);
       if (seenSignatures.has(signature)) {
-        console.log(`Skipping duplicate row for DIN ${din}: ${signature}`);
-        skippedCount++;
         continue;
       }
       seenSignatures.add(signature);
@@ -381,9 +374,6 @@ function aggregateRows(
       const packSize = resolvePackSize(row, din, descKey, packSizeKey, packSizeFor);
       if (packSize > 1) {
         qty = qty * packSize;
-        convertedCount++;
-      } else {
-        noPackSizeCount++;
       }
       existing.purchased += qty;
     } else {
@@ -412,9 +402,6 @@ function aggregateRows(
     result.set(din, existing);
   }
 
-  console.log(
-    `[file-parser] ${source}: ${convertedCount} purchase rows converted to units with a pack size, ${noPackSizeCount} had none, ${skippedCount} duplicates skipped`
-  );
   return result;
 }
 
@@ -446,9 +433,6 @@ function parseIndividualRows(
   const packSizeKey = findColumnKey(keys, PACK_SIZE_COLUMNS);
 
   const result: ParsedIndividualRow[] = [];
-  let skippedCount = 0;
-  let convertedCount = 0;
-  let noPackSizeCount = 0;
 
   for (const row of rows) {
     const din = normalizeDin(String(row[dinKey] ?? ''));
@@ -461,8 +445,6 @@ function parseIndividualRows(
     if (seenSignatures) {
       const signature = generateRowSignature(din, qty, date, row);
       if (seenSignatures.has(signature)) {
-        console.log(`Skipping duplicate row for DIN ${din}: ${signature}`);
-        skippedCount++;
         continue;
       }
       seenSignatures.add(signature);
@@ -477,9 +459,6 @@ function parseIndividualRows(
       packSize = resolvePackSize(row, din, descKey, packSizeKey, packSizeFor);
       if (packSize > 1) {
         qty = qty * packSize;
-        convertedCount++;
-      } else {
-        noPackSizeCount++;
       }
     }
 
@@ -497,9 +476,6 @@ function parseIndividualRows(
     result.push(entry);
   }
 
-  console.log(
-    `Parsed ${result.length} individual rows for ${source}: ${convertedCount} purchase rows converted to units with a pack size, ${noPackSizeCount} had none, ${skippedCount} duplicates skipped`
-  );
   return result;
 }
 
@@ -508,11 +484,8 @@ export async function parseReconciliationFiles(
   krollFile: File,
   packSizeFor?: PackSizeResolver
 ): Promise<FileParseResult> {
-  console.log('Parsing reconciliation files', { mckesson: mckessonFile.name, kroll: krollFile.name });
   const mckessonResult = await parseSingleFileWithPreview(mckessonFile, 'mckesson', undefined, packSizeFor);
-  console.log('McKesson file parsed', { dataSize: mckessonResult.data.size });
   const krollResult = await parseSingleFileWithPreview(krollFile, 'kroll', undefined, packSizeFor);
-  console.log('Kroll file parsed', { dataSize: krollResult.data.size });
   
   return {
     mckesson: mckessonResult.data,
@@ -647,7 +620,6 @@ export function mergeDinData(
       const matchedMckessonDin = findMatchingDin(din, mckesson);
       if (matchedMckessonDin) {
         m = mckesson.get(matchedMckessonDin);
-        console.log(`Merged McKesson DIN ${matchedMckessonDin} -> ${din}`);
       }
     }
 
@@ -656,7 +628,6 @@ export function mergeDinData(
       const matchedKrollDin = findMatchingDin(din, kroll);
       if (matchedKrollDin) {
         k = kroll.get(matchedKrollDin);
-        console.log(`Merged Kroll DIN ${matchedKrollDin} -> ${din}`);
       }
     }
 
@@ -732,7 +703,6 @@ export function deduplicateDinData(
         if (transaction.date &&
             transaction.date >= existingStart &&
             transaction.date <= existingEnd) {
-          console.log(`Skipping duplicate transaction for DIN ${din} on ${transaction.date.toISOString()}`);
           continue;
         }
 
