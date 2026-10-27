@@ -108,7 +108,7 @@ function findMatchingDin(din: string, dataset: Map<string, ParsedDinData>): stri
  * Generate a unique signature for a row to detect duplicates
  * Uses DIN, quantity, date, and optionally invoice/transaction number
  */
-function generateRowSignature(
+export function generateRowSignature(
   din: string,
   quantity: number,
   date: Date | null,
@@ -125,6 +125,18 @@ function generateRowSignature(
   const invoiceKey = findColumnKey(keys, ['Invoice', 'Invoice #', 'Invoice Number', 'Transaction #', 'Transaction ID', 'Order #', 'Order Number']);
   if (invoiceKey && row[invoiceKey]) {
     parts.push(String(row[invoiceKey]).trim());
+  }
+
+  // Product number / description: one invoice can hold several products that share a DIN
+  // (e.g. a 100-pack and a 200-pack) with the same quantity. Without this they were
+  // wrongly treated as duplicates and dropped.
+  const productKey = findColumnKey(keys, ['Product(s) #', 'Product #', 'Product Number', 'Product ID', 'Item #', 'Item Number', 'SKU']);
+  if (productKey && row[productKey]) {
+    parts.push(`p${String(row[productKey]).trim()}`);
+  }
+  const descKey = findColumnKey(keys, ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Medication']);
+  if (descKey && row[descKey]) {
+    parts.push(String(row[descKey]).trim().replace(/\s+/g, ' ').toUpperCase());
   }
 
   // Fallback: hash of relevant row data
