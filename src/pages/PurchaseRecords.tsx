@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Loader2, FileSpreadsheet, Trash2, Filter, X, ChevronDown } from 'lucide-react';
 import { useImportedRecords, useDeleteImportedFile, type ImportedRecordRow } from '@/hooks/useImportedRecords';
+import { isSameDin } from '@/lib/dinReference';
+import DinMonthlyTotal from '@/components/DinMonthlyTotal';
 import toast from 'react-hot-toast';
 
 const PURCHASE_FILTER_OPTIONS = [
@@ -83,11 +85,17 @@ export default function PurchaseRecords() {
       if (filters.date && !new Date(record.created_at).toLocaleDateString().toLowerCase().includes(filters.date.toLowerCase())) {
         return false;
       }
-      if (filters.din && !record.din.toLowerCase().includes(filters.din.toLowerCase())) {
+      if (filters.din && !isSameDin(record.din, filters.din) && !record.din.toLowerCase().includes(filters.din.toLowerCase())) {
         return false;
       }
-      if (filters.qty && !record.quantity.toString().includes(filters.qty)) {
-        return false;
+      if (filters.qty) {
+        // A DIN pasted into the Qty box finds that drug; otherwise match the quantity.
+        const qtyFilter = filters.qty.trim();
+        const looksLikeDin = qtyFilter.replace(/\D/g, '').length >= 6;
+        const matches = looksLikeDin
+          ? isSameDin(record.din, qtyFilter)
+          : record.quantity.toString().includes(qtyFilter);
+        if (!matches) return false;
       }
       if (filters.description && !record.description?.toLowerCase().includes(filters.description.toLowerCase())) {
         return false;
@@ -112,6 +120,8 @@ export default function PurchaseRecords() {
         <h1 className="text-2xl font-bold text-neutral-900">Purchase Records</h1>
         <p className="mt-1 text-sm text-neutral-500">View all uploaded purchase records (raw data from files)</p>
       </div>
+
+      <DinMonthlyTotal records={savedRecords} loading={savedLoading} label="Purchased" />
 
       {/* Filter Section */}
       <div className="mb-6 card p-4">

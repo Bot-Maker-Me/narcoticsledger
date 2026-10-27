@@ -76,6 +76,16 @@ export function referenceLabel(entry: DinReferenceEntry): string {
 }
 
 /**
+ * Compares two DINs ignoring separators and leading zeros, so a DIN pasted without its
+ * leading zero (or with extra ones) still matches the stored value.
+ */
+export function isSameDin(left: string, right: string): boolean {
+  const digitsLeft = String(left ?? '').replace(/\D/g, '').replace(/^0+/, '');
+  const digitsRight = String(right ?? '').replace(/\D/g, '').replace(/^0+/, '');
+  return digitsLeft !== '' && digitsLeft === digitsRight;
+}
+
+/**
  * Looks a DIN up in the entries resolved so far, retrying with leading zeros added
  * (and removed) when the exact value is not present.
  */
