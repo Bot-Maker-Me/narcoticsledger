@@ -26,6 +26,17 @@ function callbackUrl(path: string): string {
   return new URL(path, window.location.origin).href;
 }
 
+/**
+ * PostgREST returns an array for a set-returning RPC (`RETURNS TABLE`) and a bare object for
+ * a single-row one. Normalising both stops a set-returning RPC such as `get_my_profile` from
+ * producing a profile whose every field silently reads as undefined.
+ */
+function firstRow<T>(data: unknown): T | null {
+  if (Array.isArray(data)) return (data[0] as T) ?? null;
+  if (data && typeof data === 'object') return data as T;
+  return null;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -68,31 +79,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.rpc('get_my_profile');
       if (!mounted) return;
 
-      if (!error && data) {
-        setProfile(data as Profile);
+      const existing = firstRow<Profile>(data);
+      if (!error && existing) {
+        setProfile(existing);
         setLoading(false);
         return;
       }
 
       if (error) reportError(error, { scope: 'get_my_profile' });
 
-      const { data: existing } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .limit(1)
-        .maybeSingle();
-
+      // No profile at all, so the signup trigger must have failed. Ask the database to
+      // recreate it with safe defaults rather than leaving the account with no plan, which
+      // also used to skip the paywall entirely.
+      const { data: healed, error: healError } = await supabase.rpc('ensure_my_profile');
       if (!mounted) return;
 
-      if (existing) {
-        setProfile(existing as Profile);
+      const repaired = firstRow<Profile>(healed);
+      if (repaired) {
+        setProfile(repaired);
         setLoading(false);
         return;
       }
 
-      // Profile creation failed - trigger should have handled this
-      console.error('Profile not found and trigger failed to create it');
+      if (healError) reportError(healError, { scope: 'ensure_my_profile' });
+
+      console.error('Could not load or create a profile for this account');
       setLoading(false);
     })();
 
