@@ -4,13 +4,13 @@ export async function fetchStockByDrugId(): Promise<Map<string, number>> {
   try {
     const { data, error } = await supabase
       .from('drug_stock_levels')
-      .select('drug_id, current_stock');
+      .select('id, current_stock');
 
     if (error) throw error;
 
     const map = new Map<string, number>();
     for (const row of data ?? []) {
-      map.set(row.drug_id as string, Number(row.current_stock ?? 0));
+      map.set(row.id as string, Number(row.current_stock ?? 0));
     }
     return map;
   } catch (error) {

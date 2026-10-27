@@ -23,5 +23,6 @@ export interface TransactionInput {
   type: TransactionType;
   quantity: number;
   notes?: string | null;
-  source?: string;
+  /** Required for DISPENSE: the database records reductions as a dispense against a patient. */
+  patient_name?: string;
 }

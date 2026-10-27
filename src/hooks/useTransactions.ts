@@ -57,9 +57,10 @@ async function fetchTransactions(params: FetchParams): Promise<{
       query = query.in('drug_id', matchingDrugIds);
     }
 
-    // Apply type filter
+    // Apply type filter. Uploaded rows are stored upper-case while manual entries
+    // use lower-case, so match the type without regard to case.
     if (type) {
-      query = query.eq('transaction_type', type);
+      query = query.ilike('transaction_type', type);
     }
 
     // Apply source filter
@@ -96,7 +97,7 @@ async function fetchTransactions(params: FetchParams): Promise<{
           id: row.id,
           user_id: row.user_id,
           drug_id: row.drug_id,
-          type: row.transaction_type || row.type,
+          type: String(row.transaction_type ?? row.type ?? '').toUpperCase() as TransactionType,
           quantity: row.quantity,
           notes: row.notes,
           source: row.source,
@@ -114,16 +115,26 @@ async function fetchTransactions(params: FetchParams): Promise<{
 }
 
 async function addTransaction(input: TransactionInput): Promise<InventoryTransaction> {
-  const { data, error } = await supabase.rpc('add_inventory_transaction', {
+  const args = {
     p_drug_id: input.drug_id,
-    p_type: input.type,
     p_quantity: input.quantity,
     p_notes: input.notes ?? null,
-    p_source: input.source ?? 'manual',
-  });
+  };
 
-  if (error) throw error;
-  return data as InventoryTransaction;
+  let result;
+  if (input.type === 'PURCHASE') {
+    result = await supabase.rpc('add_purchase', args);
+  } else if (input.type === 'DISPENSE') {
+    result = await supabase.rpc('dispense_drug', {
+      ...args,
+      p_patient_name: input.patient_name ?? '',
+    });
+  } else {
+    result = await supabase.rpc('adjust_stock', args);
+  }
+
+  if (result.error) throw result.error;
+  return result.data as InventoryTransaction;
 }
 
 export function useTransactions(page: number) {
@@ -149,6 +160,7 @@ export function useAddTransaction() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['drugs'] });
+      queryClient.invalidateQueries({ queryKey: ['prescriptions'] });
     },
   });
 }

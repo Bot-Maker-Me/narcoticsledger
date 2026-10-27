@@ -16,7 +16,7 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
   const addMutation = useAddTransaction();
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
-  const [date, setDate] = useState('');
+  const [patientName, setPatientName] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Quantities are multiplied by this drug's Pack Size; 1 means "record as entered".
@@ -27,7 +27,7 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
     if (open) {
       setQuantity('');
       setNotes('');
-      setDate('');
+      setPatientName('');
       setErrors({});
     }
   }, [open]);
@@ -41,7 +41,7 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
   const description = isPurchase
     ? `Record a stock purchase for ${drug.description}`
     : isDispense
-      ? `Record a stock reduction for ${drug.description}`
+      ? `Record a dispense for ${drug.description} — this reduces stock`
       : `Adjust stock for ${drug.description}`;
 
   const validate = (): boolean => {
@@ -53,6 +53,9 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
       next.quantity = 'Quantity must be greater than 0';
     } else if (isDispense && qty * packSize > drug.current_stock) {
       next.quantity = `Cannot reduce more than current stock (${drug.current_stock} units)`;
+    }
+    if (isDispense && !patientName.trim()) {
+      next.patientName = 'Patient name is required';
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -70,6 +73,7 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
         type,
         quantity: units,
         notes: notes.trim() || null,
+        patient_name: isDispense ? patientName.trim() : undefined,
       });
       toast.success(
         isPurchase
@@ -163,6 +167,27 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
               )}
             </div>
 
+            {isDispense && (
+              <div>
+                <label htmlFor="patientName" className="mb-1.5 block text-sm font-medium text-neutral-700">
+                  Patient Name
+                </label>
+                <input
+                  id="patientName"
+                  type="text"
+                  value={patientName}
+                  onChange={(e) => setPatientName(e.target.value)}
+                  placeholder="e.g. John Anderson"
+                  className="input-field"
+                  disabled={isSubmitting}
+                />
+                {errors.patientName && <p className="mt-1 text-xs text-error-600">{errors.patientName}</p>}
+                <p className="mt-1.5 text-xs text-neutral-500">
+                  Reductions are recorded as a dispense, so a patient name is required.
+                </p>
+              </div>
+            )}
+
             <div>
               <label htmlFor="notes" className="mb-1.5 block text-sm font-medium text-neutral-700">
                 Notes <span className="text-neutral-400">(optional)</span>
@@ -173,20 +198,6 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Add any notes about this transaction..."
                 className="input-field min-h-[80px] resize-y"
-                disabled={isSubmitting}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="date" className="mb-1.5 block text-sm font-medium text-neutral-700">
-                Date <span className="text-neutral-400">(optional, defaults to now)</span>
-              </label>
-              <input
-                id="date"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="input-field"
                 disabled={isSubmitting}
               />
             </div>

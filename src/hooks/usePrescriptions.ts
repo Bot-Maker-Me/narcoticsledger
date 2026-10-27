@@ -3,6 +3,26 @@ import { supabase } from '@/lib/supabase';
 import { fetchStockByDrugId } from '@/lib/stockLevels';
 import type { Prescription, PrescriptionFormData, PrescriptionWithDrug } from '@/types/prescription';
 
+/** Prescription images live in a private bucket, so links are signed on read. */
+async function signImagePaths(paths: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (paths.length === 0) return map;
+
+  const { data, error } = await supabase.storage
+    .from('prescriptions')
+    .createSignedUrls(paths, 60 * 60);
+
+  if (error) {
+    console.error('Failed to sign prescription images:', error);
+    return map;
+  }
+
+  for (const entry of data ?? []) {
+    if (entry.path && entry.signedUrl) map.set(entry.path, entry.signedUrl);
+  }
+  return map;
+}
+
 async function fetchPrescriptions(): Promise<PrescriptionWithDrug[]> {
   const { data, error } = await supabase
     .from('prescriptions')
@@ -17,6 +37,11 @@ async function fetchPrescriptions(): Promise<PrescriptionWithDrug[]> {
   } catch {
     stockMap = new Map();
   }
+
+  const imagePaths = (data ?? [])
+    .map((row) => row.image_url)
+    .filter((path): path is string => !!path);
+  const signedImages = await signImagePaths(imagePaths);
 
   return (data ?? []).map((row) => {
     const drug = row.drugs as unknown as {
@@ -34,12 +59,12 @@ async function fetchPrescriptions(): Promise<PrescriptionWithDrug[]> {
       refills_total: row.refills_total,
       refills_remaining: row.refills_remaining,
       status: row.status,
-      image_url: row.image_url,
+      image_url: row.image_url ? signedImages.get(row.image_url) ?? null : null,
       notes: row.notes,
       created_at: row.created_at,
       drug_description: drug?.description ?? 'Unknown',
       drug_din: drug?.din ?? '--------',
-      drug_current_stock: stockMap.get(row.drug_id) ?? 0,
+      drug_current_stock: row.drug_id ? stockMap.get(row.drug_id) ?? 0 : 0,
     } as PrescriptionWithDrug;
   });
 }
@@ -93,6 +118,7 @@ async function dispensePrescription({
   return data as Prescription;
 }
 
+/** Returns the storage path; the bucket is private so links are signed when read. */
 async function uploadPrescriptionImage(file: File, userId: string): Promise<string> {
   const fileExt = file.name.split('.').pop();
   const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
@@ -103,8 +129,7 @@ async function uploadPrescriptionImage(file: File, userId: string): Promise<stri
 
   if (uploadError) throw uploadError;
 
-  const { data } = supabase.storage.from('prescriptions').getPublicUrl(fileName);
-  return data.publicUrl;
+  return fileName;
 }
 
 export function usePrescriptions() {
