@@ -82,13 +82,13 @@ export default function Settings() {
                 </div>
                 <button
                   onClick={() => toggle.setter(!toggle.value)}
-                  className={`relative h-6 w-11 rounded-full transition-colors duration-200 ${
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${
                     toggle.value ? 'bg-primary-600' : 'bg-neutral-200'
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-surface shadow-sm transition-transform duration-200 ${
-                      toggle.value ? 'translate-x-5' : 'translate-x-0.5'
+                    className={`inline-block h-4 w-4 transform rounded-full bg-surface shadow-sm transition-transform duration-200 ${
+                      toggle.value ? 'translate-x-6' : 'translate-x-1'
                     }`}
                   />
                 </button>
