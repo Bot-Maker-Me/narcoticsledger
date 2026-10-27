@@ -27,6 +27,7 @@ import {
   useReconciliationItems,
   useCreateCycleWithItems,
   useUpdateActualCount,
+  useUpdateOpeningBalance,
   useCompleteCycle,
   useDeleteCycle,
   computeFlag,
@@ -98,9 +99,9 @@ export default function Reconciliation() {
   const [existingDateRange, setExistingDateRange] = useState<{ start: Date | null; end: Date | null } | null>(null);
   const [skippedDuplicates, setSkippedDuplicates] = useState(0);
 
-  // Edit functionality for purchased/dispensed columns
+  // Edit functionality for opening/purchased/dispensed columns
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [editingField, setEditingField] = useState<'purchased' | 'dispensed' | null>(null);
+  const [editingField, setEditingField] = useState<'opening' | 'purchased' | 'dispensed' | null>(null);
 
   const [cycleForm, setCycleForm] = useState<CycleFormData>({
     start_date: '',
@@ -128,6 +129,7 @@ export default function Reconciliation() {
   const completeMutation = useCompleteCycle();
   const deleteMutation = useDeleteCycle();
   const updateMutation = useUpdateActualCount();
+  const openingMutation = useUpdateOpeningBalance();
   const [locationEditIndex, setLocationEditIndex] = useState<number | null>(null);
   const { data: activeCycleItems } = useReconciliationItems(activeCycleId);
 
@@ -790,6 +792,21 @@ export default function Reconciliation() {
     });
   };
 
+  const handleOpeningEdit = (index: number, value: string) => {
+    const numValue = value === '' ? 0 : parseInt(value);
+    if (isNaN(numValue) || numValue < 0) return;
+
+    setDraftItems((prev) => {
+      const next = [...prev];
+      const item = { ...next[index] };
+      item.opening_balance = numValue;
+      item.flag = computeFlag(item.actual_count, computeExpected(item), item.schedule);
+      next[index] = item;
+      addToHistory(next);
+      return next;
+    });
+  };
+
   const handlePurchasedEdit = (index: number, value: string) => {
     const numValue = value === '' ? 0 : parseInt(value);
     if (isNaN(numValue) || numValue < 0) return;
@@ -820,7 +837,7 @@ export default function Reconciliation() {
     });
   };
 
-  const handleEditClick = (index: number, field: 'purchased' | 'dispensed') => {
+  const handleEditClick = (index: number, field: 'opening' | 'purchased' | 'dispensed') => {
     setEditingIndex(index);
     setEditingField(field);
   };
@@ -837,6 +854,17 @@ export default function Reconciliation() {
       await updateMutation.mutateAsync({ itemId, actualCount: numValue });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update';
+      toast.error(message);
+    }
+  };
+
+  const handleSavedOpeningBlur = async (itemId: string, value: string) => {
+    const numValue = value === '' ? 0 : parseInt(value);
+    if (isNaN(numValue) || numValue < 0) return;
+    try {
+      await openingMutation.mutateAsync({ itemId, openingBalance: numValue });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update opening count';
       toast.error(message);
     }
   };
@@ -994,6 +1022,7 @@ export default function Reconciliation() {
         editingIndex={editingIndex}
         editingField={editingField}
         onEditClick={handleEditClick}
+        onOpeningEdit={handleOpeningEdit}
         onPurchasedEdit={handlePurchasedEdit}
         onDispensedEdit={handleDispensedEdit}
         onEditBlur={handleEditBlur}
@@ -1029,10 +1058,11 @@ export default function Reconciliation() {
       <DetailView
         items={items}
         onActualCountBlur={handleSavedActualCountBlur}
+        onOpeningBlur={handleSavedOpeningBlur}
         onComplete={handleCompleteCycle}
         onBack={() => setView('past')}
         completing={completeMutation.isPending}
-        updating={updateMutation.isPending}
+        updating={updateMutation.isPending || openingMutation.isPending}
       />
     );
   }
@@ -1483,8 +1513,9 @@ interface TableViewProps {
   searchQuery: string;
   onOpenLocations: (din: string) => void;
   editingIndex: number | null;
-  editingField: 'purchased' | 'dispensed' | null;
-  onEditClick: (index: number, field: 'purchased' | 'dispensed') => void;
+  editingField: 'opening' | 'purchased' | 'dispensed' | null;
+  onEditClick: (index: number, field: 'opening' | 'purchased' | 'dispensed') => void;
+  onOpeningEdit: (index: number, value: string) => void;
   onPurchasedEdit: (index: number, value: string) => void;
   onDispensedEdit: (index: number, value: string) => void;
   onEditBlur: () => void;
@@ -1506,6 +1537,14 @@ function TableView(props: TableViewProps) {
     if (props.items.length === 0) return 0;
     const counted = props.items.filter(item => item.actual_count !== null).length;
     return Math.round((counted / props.items.length) * 100);
+  }, [props.items]);
+
+  // Rows can be filtered by the search box, so map each DIN back to its
+  // position in the full item list to keep edits pointed at the right row.
+  const indexByDin = useMemo(() => {
+    const map = new Map<string, number>();
+    props.items.forEach((item, i) => map.set(item.din, i));
+    return map;
   }, [props.items]);
 
   const handleExportCSV = () => {
@@ -1656,6 +1695,12 @@ function TableView(props: TableViewProps) {
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Opening</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Purchased</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Dispensed</th>
+                <th
+                  className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-primary-600"
+                  title="Total units for this DIN in this period (Opening + Purchased − Dispensed)"
+                >
+                  Total
+                </th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Expected</th>
                 <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-neutral-500">Actual</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Variance</th>
@@ -1666,7 +1711,9 @@ function TableView(props: TableViewProps) {
             </thead>
             <tbody className="divide-y divide-neutral-50">
               {props.filteredItems.map((item, index) => {
-                const expected = item.opening_balance + item.purchased_count - item.dispensed_count;
+                const itemIndex = indexByDin.get(item.din) ?? index;
+                const total = item.opening_balance + item.purchased_count - item.dispensed_count;
+                const expected = total;
                 const variance = item.actual_count !== null ? item.actual_count - expected : null;
                 const hasVariance = variance !== null && variance !== 0;
                 const isHighlighted = props.searchQuery && (
@@ -1688,7 +1735,7 @@ function TableView(props: TableViewProps) {
                         <input
                           type="checkbox"
                           checked={item.selected || false}
-                          onChange={() => props.onToggleItemSelection(index)}
+                          onChange={() => props.onToggleItemSelection(itemIndex)}
                           className="rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
                         />
                       </td>
@@ -1699,14 +1746,13 @@ function TableView(props: TableViewProps) {
                     <td className="px-3 py-2.5">
                       <span className="text-sm text-neutral-700">{item.description}</span>
                     </td>
-                    <td className="px-3 py-2.5 text-right text-sm text-neutral-600">{item.opening_balance}</td>
-                    <td className="px-3 py-2.5 text-right text-sm text-success-600">
-                      {props.editingIndex === index && props.editingField === 'purchased' ? (
+                    <td className="px-3 py-2.5 text-right text-sm text-neutral-600">
+                      {props.editingIndex === itemIndex && props.editingField === 'opening' ? (
                         <input
                           type="number"
                           autoFocus
-                          defaultValue={item.purchased_count}
-                          onChange={(e) => props.onPurchasedEdit(index, e.target.value)}
+                          defaultValue={item.opening_balance}
+                          onChange={(e) => props.onOpeningEdit(itemIndex, e.target.value)}
                           onBlur={props.onEditBlur}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
@@ -1718,7 +1764,33 @@ function TableView(props: TableViewProps) {
                         />
                       ) : (
                         <span
-                          onClick={() => props.onEditClick(index, 'purchased')}
+                          onClick={() => props.onEditClick(itemIndex, 'opening')}
+                          className="cursor-pointer hover:bg-primary-50 hover:text-primary-600 rounded px-2 py-1 transition-colors"
+                          title="Click to edit opening count"
+                        >
+                          {item.opening_balance}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-sm text-success-600">
+                      {props.editingIndex === itemIndex && props.editingField === 'purchased' ? (
+                        <input
+                          type="number"
+                          autoFocus
+                          defaultValue={item.purchased_count}
+                          onChange={(e) => props.onPurchasedEdit(itemIndex, e.target.value)}
+                          onBlur={props.onEditBlur}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.currentTarget.blur();
+                            }
+                          }}
+                          className="w-20 rounded border border-primary-400 px-2 py-1 text-right text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                          min="0"
+                        />
+                      ) : (
+                        <span
+                          onClick={() => props.onEditClick(itemIndex, 'purchased')}
                           className="cursor-pointer hover:bg-primary-50 hover:text-primary-600 rounded px-2 py-1 transition-colors"
                           title="Click to edit"
                         >
@@ -1727,12 +1799,12 @@ function TableView(props: TableViewProps) {
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right text-sm text-error-600">
-                      {props.editingIndex === index && props.editingField === 'dispensed' ? (
+                      {props.editingIndex === itemIndex && props.editingField === 'dispensed' ? (
                         <input
                           type="number"
                           autoFocus
                           defaultValue={item.dispensed_count}
-                          onChange={(e) => props.onDispensedEdit(index, e.target.value)}
+                          onChange={(e) => props.onDispensedEdit(itemIndex, e.target.value)}
                           onBlur={props.onEditBlur}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
@@ -1744,7 +1816,7 @@ function TableView(props: TableViewProps) {
                         />
                       ) : (
                         <span
-                          onClick={() => props.onEditClick(index, 'dispensed')}
+                          onClick={() => props.onEditClick(itemIndex, 'dispensed')}
                           className="cursor-pointer hover:bg-primary-50 hover:text-primary-600 rounded px-2 py-1 transition-colors"
                           title="Click to edit"
                         >
@@ -1752,13 +1824,19 @@ function TableView(props: TableViewProps) {
                         </span>
                       )}
                     </td>
+                    <td
+                      className="px-3 py-2.5 text-right text-sm font-semibold text-primary-700 bg-primary-50/40"
+                      title="Total units for this DIN (Opening + Purchased − Dispensed)"
+                    >
+                      {total}
+                    </td>
                     <td className="px-3 py-2.5 text-right text-sm font-semibold text-neutral-700">{expected}</td>
                     <td className="px-3 py-2.5">
                       <input
                         type="number"
                         min={0}
                         value={item.actual_count ?? ''}
-                        onChange={(e) => props.onActualCountChange(index, e.target.value)}
+                        onChange={(e) => props.onActualCountChange(itemIndex, e.target.value)}
                         placeholder="—"
                         className="w-16 rounded-lg border border-neutral-200 px-2 py-1 text-center text-sm text-neutral-800 placeholder:text-neutral-300 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
                       />
@@ -1781,14 +1859,14 @@ function TableView(props: TableViewProps) {
                       <input
                         type="text"
                         value={item.note || ''}
-                        onChange={(e) => props.onNoteChange(index, e.target.value)}
+                        onChange={(e) => props.onNoteChange(itemIndex, e.target.value)}
                         placeholder="Add note..."
                         className="w-full rounded border border-neutral-200 px-2 py-1 text-xs text-neutral-800 placeholder:text-neutral-300 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
                       />
                     </td>
                     <td className="px-3 py-2.5 text-center">
                       <button
-                        onClick={() => props.onVerifyItem(index)}
+                        onClick={() => props.onVerifyItem(itemIndex)}
                         className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
                         title="Add verification note"
                       >
@@ -1928,6 +2006,7 @@ interface SavedItem {
 interface DetailViewProps {
   items: SavedItem[];
   onActualCountBlur: (itemId: string, value: string) => void;
+  onOpeningBlur: (itemId: string, value: string) => void;
   onComplete: () => void;
   onBack: () => void;
   completing: boolean;
@@ -1966,6 +2045,12 @@ function DetailView(props: DetailViewProps) {
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Opening</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Purchased</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Dispensed</th>
+                <th
+                  className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-primary-600"
+                  title="Total units for this DIN (Opening + Purchased − Dispensed)"
+                >
+                  Total
+                </th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Expected</th>
                 <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-neutral-500">Actual</th>
                 <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Variance</th>
@@ -1984,9 +2069,24 @@ function DetailView(props: DetailViewProps) {
                     <td className="px-3 py-2.5">
                       <span className="text-sm text-neutral-700">{item.description ?? 'Unknown'}</span>
                     </td>
-                    <td className="px-3 py-2.5 text-right text-sm text-neutral-600">{item.opening_balance}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <input
+                        type="number"
+                        min={0}
+                        defaultValue={item.opening_balance}
+                        onBlur={(e) => props.onOpeningBlur(item.id, e.target.value)}
+                        title="Opening count — editable"
+                        className="w-16 rounded-lg border border-neutral-200 px-2 py-1 text-center text-sm text-neutral-800 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                      />
+                    </td>
                     <td className="px-3 py-2.5 text-right text-sm text-success-600">+{item.purchased_count}</td>
                     <td className="px-3 py-2.5 text-right text-sm text-error-600">-{item.dispensed_count}</td>
+                    <td
+                      className="px-3 py-2.5 text-right text-sm font-semibold text-primary-700 bg-primary-50/40"
+                      title="Total units for this DIN (Opening + Purchased − Dispensed)"
+                    >
+                      {expected}
+                    </td>
                     <td className="px-3 py-2.5 text-right text-sm font-semibold text-neutral-700">{expected}</td>
                     <td className="px-3 py-2.5">
                       <input

@@ -120,6 +120,22 @@ async function updateActualCount({
   return data as ReconciliationItem;
 }
 
+async function updateOpeningBalance({
+  itemId,
+  openingBalance,
+}: {
+  itemId: string;
+  openingBalance: number;
+}): Promise<ReconciliationItem> {
+  const { data, error } = await supabase.rpc('update_reconciliation_opening', {
+    p_item_id: itemId,
+    p_opening_balance: openingBalance,
+  });
+
+  if (error) throw error;
+  return data as ReconciliationItem;
+}
+
 async function completeCycle({
   cycleId,
   formData,
@@ -182,6 +198,17 @@ export function useUpdateActualCount() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: updateActualCount,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-items'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-items-all'] });
+    },
+  });
+}
+
+export function useUpdateOpeningBalance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updateOpeningBalance,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reconciliation-items'] });
       queryClient.invalidateQueries({ queryKey: ['reconciliation-items-all'] });
