@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import type { InventoryTransaction, TransactionInput, TransactionWithDrug } from '@/types/transaction';
+import type { InventoryTransaction, TransactionInput, TransactionType, TransactionWithDrug } from '@/types/transaction';
 
 const PAGE_SIZE = 10;
 

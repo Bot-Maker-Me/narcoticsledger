@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Loader2, FileSpreadsheet, Trash2, Filter, X, ChevronDown } from 'lucide-react';
-import { useImportedRecords, useDeleteImportedFile } from '@/hooks/useImportedRecords';
+import { useImportedRecords, useDeleteImportedFile, type ImportedRecordRow } from '@/hooks/useImportedRecords';
 import toast from 'react-hot-toast';
 
 const PURCHASE_FILTER_OPTIONS = [
@@ -205,8 +205,8 @@ export default function PurchaseRecords() {
         ) : (
           <div>
             {(() => {
-              const groupedRecords = new Map<string, typeof filteredRecords>();
-              filteredRecords.forEach(record => {
+              const groupedRecords = new Map<string, ImportedRecordRow[]>();
+              (filteredRecords ?? []).forEach(record => {
                 const fileName = record.file_name || `Imported ${new Date(record.created_at).toLocaleDateString()}`;
                 if (!groupedRecords.has(fileName)) {
                   groupedRecords.set(fileName, []);

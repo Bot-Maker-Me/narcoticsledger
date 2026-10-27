@@ -54,7 +54,7 @@ export function exportToPDF(items: ReconciliationItemDraft[], filename: string =
   
   // Draw headers
   doc.setFontSize(8);
-  doc.setFont(undefined, 'bold');
+  doc.setFont('helvetica', 'bold');
   headers.forEach((header, i) => {
     let x = 14;
     for (let j = 0; j < i; j++) {
@@ -70,7 +70,7 @@ export function exportToPDF(items: ReconciliationItemDraft[], filename: string =
   y += 5;
   
   // Draw data rows
-  doc.setFont(undefined, 'normal');
+  doc.setFont('helvetica', 'normal');
   items.forEach((item, index) => {
     if (y > 270) {
       doc.addPage();
@@ -116,11 +116,11 @@ export function exportToPDF(items: ReconciliationItemDraft[], filename: string =
   
   y += 10;
   doc.setFontSize(10);
-  doc.setFont(undefined, 'bold');
+  doc.setFont('helvetica', 'bold');
   doc.text('Summary', 14, y);
   y += 7;
   
-  doc.setFont(undefined, 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.text(`Total Items: ${items.length}`, 14, y);
   y += 5;
   doc.text(`Counted: ${counted}`, 14, y);

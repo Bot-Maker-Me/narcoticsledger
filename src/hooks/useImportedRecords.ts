@@ -125,7 +125,7 @@ async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow
       din: drug?.din ?? '--------',
       description: drug?.description ?? 'Unknown',
       quantity: Math.abs(Number(row.quantity ?? 0)),
-      type: (row as any).transaction_type || row.type || KIND_CONFIG[kind].type as TransactionType,
+      type: ((row as any).transaction_type || KIND_CONFIG[kind].type) as TransactionType,
       source: (row as any).source || KIND_CONFIG[kind].source,
       created_at: (row as any).date || row.created_at || new Date().toISOString(),
       file_name: (row as any).file_name,

@@ -631,7 +631,7 @@ function AuditTab() {
                   )}
                 </div>
                 {log.details && (
-                  <button onClick={() => toast.info(JSON.stringify(log.details, null, 2))} className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100" title="View details">
+                  <button onClick={() => toast(JSON.stringify(log.details, null, 2))} className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-100" title="View details">
                     <FileText className="h-4 w-4" />
                   </button>
                 )}

@@ -18,6 +18,7 @@ async function fetchSystemSettings(): Promise<SystemSettings> {
         id: 1,
         subscription_price_cents: 2900,
         trial_days: 14,
+        updated_at: new Date().toISOString(),
       };
     }
     
@@ -30,6 +31,7 @@ async function fetchSystemSettings(): Promise<SystemSettings> {
       id: 1,
       subscription_price_cents: 2900,
       trial_days: 14,
+      updated_at: new Date().toISOString(),
     };
   }
 }

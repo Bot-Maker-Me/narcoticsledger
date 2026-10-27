@@ -268,7 +268,7 @@ export default function Reports() {
                   <tr key={i} className="transition-colors hover:bg-neutral-50/50">
                     {Object.values(row).map((cell, j) => (
                       <td key={j} className="px-3 py-2.5 text-sm text-neutral-700">
-                        {cell}
+                        {String(cell ?? '')}
                       </td>
                     ))}
                   </tr>
@@ -484,7 +484,7 @@ function getReportData(
         acc[item.schedule] = (acc[item.schedule] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
-      return Object.entries(scheduleCounts).map(([schedule, count]) => ({
+      return (Object.entries(scheduleCounts) as [string, number][]).map(([schedule, count]) => ({
         schedule,
         count,
         percentage: ((count / total) * 100).toFixed(1) + '%',

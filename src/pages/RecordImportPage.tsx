@@ -360,7 +360,7 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
                 <div key={index} className="rounded-lg bg-neutral-50 p-4">
                   <div className="mb-2 flex items-center justify-between">
                     <h4 className="font-medium text-neutral-800">{preview.fileName}</h4>
-                    <span className="text-xs text-neutral-500">{preview.rowCount} rows</span>
+                    <span className="text-xs text-neutral-500">{preview.totalRows} rows</span>
                   </div>
                   {preview.dateRange && (
                     <p className="text-xs text-neutral-500">
