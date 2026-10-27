@@ -301,13 +301,14 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
           </div>
 
           <div className="card overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* Bounded scroll area so a long parsed file does not run the page off the screen. */}
+            <div className="max-h-[70vh] overflow-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-neutral-100 bg-neutral-50/50">
-                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">DIN</th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Description</th>
-                    <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">{meta.qtyLabel}</th>
+                  <tr>
+                    <th className="sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">DIN</th>
+                    <th className="sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Description</th>
+                    <th className="sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">{meta.qtyLabel}</th>
                   </tr>
                 </thead>
                 <tbody>

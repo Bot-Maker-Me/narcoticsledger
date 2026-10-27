@@ -1,26 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, FileSpreadsheet, Trash2, Filter, X, ChevronDown } from 'lucide-react';
 import { useImportedRecords, useDeleteImportedFile, type ImportedRecordRow } from '@/hooks/useImportedRecords';
 import { isSameDin } from '@/lib/dinReference';
-import { formatLedgerDate, parseLedgerDate } from '@/lib/ledgerDate';
+import { formatLedgerDate, parseLedgerDate, toLedgerDateString } from '@/lib/ledgerDate';
 import DinMonthlyTotal from '@/components/DinMonthlyTotal';
 import toast from 'react-hot-toast';
 import SectionMarker from '@/components/SectionMarker';
 
+// The imported purchase data carries DIN, description, quantity and date only.
 const PURCHASE_FILTER_OPTIONS = [
   { value: 'date', label: 'Date' },
-  { value: 'invoiceNumber', label: 'Invoice Number' },
   { value: 'din', label: 'DIN' },
   { value: 'qty', label: 'Qty' },
   { value: 'description', label: 'Description' },
-];
-
-const DISPENSE_FILTER_OPTIONS = [
-  { value: 'rx', label: 'RX' },
-  { value: 'qty', label: 'Qty' },
-  { value: 'drug', label: 'Drug' },
-  { value: 'din', label: 'DIN' },
-  { value: 'fillDate', label: 'Fill Date' },
 ];
 
 export default function PurchaseRecords() {
@@ -29,7 +21,6 @@ export default function PurchaseRecords() {
 
   const [filters, setFilters] = useState({
     date: '',
-    invoiceNumber: '',
     din: '',
     qty: '',
     description: '',
@@ -37,6 +28,30 @@ export default function PurchaseRecords() {
 
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
+  const filterRef = useRef<HTMLDivElement>(null);
+
+  // Close the filter menu on an outside click or Escape.
+  useEffect(() => {
+    if (!showFilterDropdown) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+        setShowFilterDropdown(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowFilterDropdown(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showFilterDropdown]);
 
   const handleDeleteFile = async (fileName: string) => {
     if (!confirm(`Are you sure you want to delete all records from "${fileName}"? This will also remove them from Transaction History.`)) {
@@ -59,7 +74,6 @@ export default function PurchaseRecords() {
   const clearFilters = () => {
     setFilters({
       date: '',
-      invoiceNumber: '',
       din: '',
       qty: '',
       description: '',
@@ -82,11 +96,23 @@ export default function PurchaseRecords() {
 
   const filterRecords = (records: typeof savedRecords) => {
     if (!records) return records;
-    
+
     return records.filter(record => {
       if (filters.date) {
-        const recordDate = parseLedgerDate(record.created_at)?.toLocaleDateString().toLowerCase() ?? '';
-        if (!recordDate.includes(filters.date.toLowerCase())) return false;
+        // Accept "2026-02", "feb", "February 2026" or "2/26/2026".
+        const parsed = parseLedgerDate(record.created_at);
+        const needle = filters.date.trim().toLowerCase();
+        const haystack = parsed
+          ? [
+              formatLedgerDate(record.created_at),
+              toLedgerDateString(parsed),
+              parsed.toLocaleDateString(),
+              `${parsed.toLocaleDateString('en-US', { month: 'long' })} ${parsed.getFullYear()}`,
+            ]
+              .join(' ')
+              .toLowerCase()
+          : '';
+        if (!haystack.includes(needle)) return false;
       }
       if (filters.din && !isSameDin(record.din, filters.din) && !record.din.toLowerCase().includes(filters.din.toLowerCase())) {
         return false;
@@ -103,19 +129,12 @@ export default function PurchaseRecords() {
       if (filters.description && !record.description?.toLowerCase().includes(filters.description.toLowerCase())) {
         return false;
       }
-      // Invoice number filtering would need additional field in database
-      if (filters.invoiceNumber) {
-        // For now, this would filter by any field containing the invoice number
-        const searchValue = filters.invoiceNumber.toLowerCase();
-        const matchesDin = record.din.toLowerCase().includes(searchValue);
-        const matchesDesc = record.description?.toLowerCase().includes(searchValue);
-        if (!matchesDin && !matchesDesc) return false;
-      }
       return true;
     });
   };
 
   const filteredRecords = filterRecords(savedRecords);
+  const isFiltering = activeFilters.length > 0;
 
   return (
     <div>
@@ -127,40 +146,47 @@ export default function PurchaseRecords() {
 
       <DinMonthlyTotal records={savedRecords} loading={savedLoading} label="Purchased" />
 
-      {/* Filter Section */}
-      <div className="mb-6 card p-4">
+      {/* Filter Section — z-10 keeps the open menu above the records card below. */}
+      <div className="card relative z-10 mb-6 p-4">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="relative">
+          <div className="relative" ref={filterRef}>
             <button
               onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-              className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-surface px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+              aria-expanded={showFilterDropdown}
+              aria-haspopup="menu"
+              className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                isFiltering
+                  ? 'border-primary-400 bg-primary-50 text-primary-700'
+                  : 'border-white/15 bg-white/5 text-neutral-700 hover:bg-white/10 hover:text-neutral-900'
+              }`}
             >
               <Filter className="h-4 w-4" />
               Filter
-              <ChevronDown className="h-4 w-4" />
+              <ChevronDown className={`h-4 w-4 transition-transform ${showFilterDropdown ? 'rotate-180' : ''}`} />
             </button>
 
             {showFilterDropdown && (
-              <div className="absolute top-full left-0 mt-2 w-48 rounded-lg border border-neutral-200 bg-surface shadow-elevated z-10">
-                {PURCHASE_FILTER_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => {
-                      toggleFilter(option.value);
-                      setShowFilterDropdown(false);
-                    }}
-                    className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                      activeFilters.includes(option.value)
-                        ? 'bg-primary-50 text-primary-700'
-                        : 'text-neutral-700 hover:bg-neutral-50'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
+              <div className="absolute left-0 top-full z-20 mt-2 max-h-72 w-52 animate-slide-up overflow-y-auto rounded-lg border border-white/10 bg-surface p-1 shadow-elevated">
+                {PURCHASE_FILTER_OPTIONS.map((option) => {
+                  const isActive = activeFilters.includes(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        toggleFilter(option.value);
+                        setShowFilterDropdown(false);
+                      }}
+                      className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                        isActive
+                          ? 'bg-primary-50 text-primary-700'
+                          : 'text-neutral-600 hover:bg-white/5 hover:text-neutral-900'
+                      }`}
+                    >
                       {option.label}
-                      {activeFilters.includes(option.value) && <span className="text-xs">✓</span>}
-                    </div>
-                  </button>
-                ))}
+                      {isActive && <span className="text-xs">✓</span>}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -168,8 +194,8 @@ export default function PurchaseRecords() {
           {activeFilters.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               {activeFilters.map((filterValue) => (
-                <div key={filterValue} className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-surface px-3 py-2">
-                  <span className="text-xs font-medium text-neutral-600">
+                <div key={filterValue} className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5">
+                  <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-neutral-500">
                     {PURCHASE_FILTER_OPTIONS.find(o => o.value === filterValue)?.label}
                   </span>
                   <input
@@ -177,11 +203,11 @@ export default function PurchaseRecords() {
                     placeholder="Search..."
                     value={filters[filterValue as keyof typeof filters]}
                     onChange={(e) => handleFilterChange(filterValue, e.target.value)}
-                    className="w-24 rounded border border-neutral-200 px-2 py-1 text-xs focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-100"
+                    className="w-28 rounded border border-white/15 bg-ink-950/40 px-2 py-1 text-xs text-neutral-800 placeholder:text-neutral-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/30"
                   />
                   <button
                     onClick={() => toggleFilter(filterValue)}
-                    className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 transition-colors"
+                    className="rounded p-1 text-neutral-400 transition-colors hover:bg-white/10 hover:text-neutral-700"
                     title="Remove filter"
                   >
                     <X className="h-3 w-3" />
@@ -190,16 +216,16 @@ export default function PurchaseRecords() {
               ))}
               <button
                 onClick={clearFilters}
-                className="rounded-lg px-3 py-2 text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-colors"
+                className="rounded-lg px-3 py-2 text-xs font-medium text-neutral-500 transition-colors hover:bg-white/5 hover:text-neutral-800"
               >
                 Clear All
               </button>
             </div>
           )}
 
-          {filteredRecords && filteredRecords.length !== savedRecords?.length && (
+          {isFiltering && savedRecords && (
             <span className="text-xs text-neutral-500">
-              Showing {filteredRecords.length} of {savedRecords?.length} records
+              Showing {filteredRecords?.length ?? 0} of {savedRecords.length} records
             </span>
           )}
         </div>
@@ -232,16 +258,28 @@ export default function PurchaseRecords() {
                 return (
                   <div className="py-12 text-center">
                     <FileSpreadsheet className="mx-auto h-12 w-12 text-neutral-300" />
-                    <p className="mt-4 text-sm text-neutral-400">No purchase records uploaded yet</p>
+                    {isFiltering ? (
+                      <>
+                        <p className="mt-4 text-sm text-neutral-400">No records match the current filters</p>
+                        <button onClick={clearFilters} className="btn-secondary mt-4">
+                          Clear filters
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="mt-4 text-sm text-neutral-400">No purchase records uploaded yet</p>
+                        <p className="mt-2 text-xs text-neutral-400">Go to Upload File to add purchase records</p>
+                      </>
+                    )}
                   </div>
                 );
               }
 
               return Array.from(groupedRecords.entries()).map(([fileName, records]) => (
-                <div key={fileName} className="border-b border-neutral-100 last:border-b-0">
-                  <div className="flex items-center justify-between bg-neutral-50 px-4 py-3">
+                <div key={fileName} className="border-b border-white/5 last:border-b-0">
+                  <div className="flex items-center justify-between border-b border-white/5 bg-ink-850 px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <FileSpreadsheet className="h-4 w-4 text-neutral-500" />
+                      <FileSpreadsheet className="h-4 w-4 text-primary-500" />
                       <span className="text-sm font-medium text-neutral-800">{fileName}</span>
                       <span className="text-xs text-neutral-500">({records.length} rows)</span>
                     </div>
@@ -258,19 +296,20 @@ export default function PurchaseRecords() {
                       )}
                     </button>
                   </div>
-                  <div className="overflow-x-auto">
+                  {/* Bounded scroll area so a long file does not run the page off the screen. */}
+                  <div className="max-h-[70vh] overflow-auto">
                     <table className="w-full">
                       <thead>
-                        <tr className="border-b border-neutral-100 bg-neutral-50/50">
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">DIN</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Description</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Purchased</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Date</th>
+                        <tr>
+                          <th className="sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">DIN</th>
+                          <th className="sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Description</th>
+                          <th className="sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Purchased</th>
+                          <th className="sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Date</th>
                         </tr>
                       </thead>
                       <tbody>
                         {records.map((record) => (
-                          <tr key={record.id} className="border-b border-neutral-50 hover:bg-neutral-50/50">
+                          <tr key={record.id} className="border-b border-white/5 transition-colors hover:bg-white/5">
                             <td className="px-4 py-3 text-sm font-mono text-neutral-800">{record.din}</td>
                             <td className="px-4 py-3 text-sm text-neutral-600">{record.description}</td>
                             <td className="px-4 py-3 text-right text-sm text-neutral-600">{record.quantity}</td>
