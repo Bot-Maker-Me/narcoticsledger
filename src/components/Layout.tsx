@@ -15,6 +15,9 @@ import {
   Activity,
   Trash2,
   FileText,
+  Package,
+  ClipboardList,
+  BarChart3,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
@@ -24,8 +27,11 @@ import { motion } from 'framer-motion';
 
 const baseNavItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/inventory', label: 'Inventory', icon: Package },
+  { to: '/prescriptions', label: 'Prescriptions', icon: ClipboardList },
   { to: '/transactions', label: 'Transactions', icon: Receipt },
-  { to: '/reconciliation', label: 'Manual Reconciliation', icon: Scale },
+  { to: '/reconciliation', label: 'Reconciliation', icon: Scale },
+  { to: '/reports', label: 'Reports', icon: BarChart3 },
   { to: '/upload-file', label: 'Upload File', icon: FileText },
   { to: '/purchase-records', label: 'Purchase Records', icon: ShoppingCart },
   { to: '/dispensing-records', label: 'Dispensing Records', icon: Activity },
