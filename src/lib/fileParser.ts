@@ -108,7 +108,7 @@ function findMatchingDin(din: string, dataset: Map<string, ParsedDinData>): stri
  * Generate a unique signature for a row to detect duplicates
  * Uses DIN, quantity, date, and optionally invoice/transaction number
  */
-function generateRowSignature(
+export function generateRowSignature(
   din: string,
   quantity: number,
   date: Date | null,
