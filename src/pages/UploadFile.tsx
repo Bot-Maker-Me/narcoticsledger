@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { parseSingleFileWithIndividualRows, type FilePreview } from '@/lib/fileParser';
+import { createPackSizeResolver, ensureDinReference } from '@/lib/dinReference';
+import { useDrugs } from '@/hooks/useDrugs';
 import type { ParsedDinData } from '@/types/reconciliation';
 import {
   useImportedRecords,
@@ -63,6 +65,7 @@ export default function UploadFile() {
 
   const currentType = UPLOAD_TYPES.find(t => t.id === selectedType);
   const { data: savedRecords, isLoading: savedLoading } = useImportedRecords(selectedType);
+  const { data: drugs } = useDrugs();
   const saveMutation = useSaveImportedIndividualRows(selectedType);
   const deleteMutation = useDeleteImportedFile(selectedType);
 
@@ -109,12 +112,17 @@ export default function UploadFile() {
 
     setParsing(true);
     try {
+      // Quantities are converted to total units via the CDSA/DPD reference and the
+      // Pack Size stored on each drug record.
+      await ensureDinReference();
+      const packSizeFor = createPackSizeResolver(drugs ?? []);
+
       const seenSignatures = new Set<string>();
       let allRows: Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }> = [];
       let previews: FilePreview[] = [];
 
       for (const file of files) {
-        const { data, preview } = await parseSingleFileWithIndividualRows(file, currentType!.parseSource, seenSignatures);
+        const { data, preview } = await parseSingleFileWithIndividualRows(file, currentType!.parseSource, seenSignatures, packSizeFor);
         allRows = [...allRows, ...data];
         if (preview) previews.push(preview);
       }

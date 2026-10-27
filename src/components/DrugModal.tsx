@@ -2,6 +2,8 @@ import { useState, useEffect, type FormEvent } from 'react';
 import { X, Loader2, Pill } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useCreateDrug, useUpdateDrug, useCheckDinUnique } from '@/hooks/useDrugs';
+import { useDinReference } from '@/hooks/useDinReference';
+import { referenceLabel } from '@/lib/dinReference';
 import { SCHEDULES, type Drug, type DrugFormData, type DrugSchedule } from '@/types/drug';
 
 interface DrugModalProps {
@@ -15,6 +17,7 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
   const createMutation = useCreateDrug();
   const updateMutation = useUpdateDrug();
   const dinCheckMutation = useCheckDinUnique();
+  const { referenceFor } = useDinReference();
 
   const [form, setForm] = useState<DrugFormData>({
     din: '',
@@ -109,6 +112,25 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
 
+  // Match the entered DIN against the CDSA/DPD reference to fill the pack size.
+  const referenceMatch = form.din.length === 8 ? referenceFor(form.din) : null;
+
+  const handleDinChange = (value: string) => {
+    const din = value.replace(/\D/g, '');
+    const reference = din.length === 8 ? referenceFor(din) : null;
+    setForm((current) => {
+      if (!reference) return { ...current, din };
+      const label = referenceLabel(reference);
+      return {
+        ...current,
+        din,
+        pack_size: reference.packSize > 0 ? reference.packSize : current.pack_size,
+        schedule: reference.schedule ?? current.schedule,
+        description: current.description.trim() === '' && label ? label : current.description,
+      };
+    });
+  };
+
   if (!open) return null;
 
   return (
@@ -149,12 +171,25 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
                 inputMode="numeric"
                 maxLength={8}
                 value={form.din}
-                onChange={(e) => setForm({ ...form, din: e.target.value.replace(/\D/g, '') })}
+                onChange={(e) => handleDinChange(e.target.value)}
                 placeholder="00000000"
                 className="input-field font-mono tracking-wider"
                 disabled={isSubmitting}
               />
               {errors.din && <p className="mt-1 text-xs text-error-600">{errors.din}</p>}
+              {form.din.length === 8 &&
+                (referenceMatch ? (
+                  <p className="mt-1 text-xs text-success-600">
+                    CDSA/DPD match: {referenceMatch.description ?? 'reference product'}
+                    {referenceMatch.strength ? ` ${referenceMatch.strength}` : ''}
+                    {referenceMatch.schedule ? ` · ${referenceMatch.schedule}` : ''}
+                    {referenceMatch.packSize > 0 ? ` · pack size ${referenceMatch.packSize}` : ''}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-neutral-400">
+                    No CDSA/DPD match for this DIN — enter the pack size manually.
+                  </p>
+                ))}
             </div>
 
             <div>

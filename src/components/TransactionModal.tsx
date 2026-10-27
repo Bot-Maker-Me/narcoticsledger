@@ -1,7 +1,9 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useMemo, type FormEvent } from 'react';
 import { X, Loader2, Plus, Minus, Package } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAddTransaction } from '@/hooks/useTransactions';
+import { useDinReference } from '@/hooks/useDinReference';
+import { createPackSizeResolver } from '@/lib/dinReference';
 import type { DrugWithStock } from '@/types/drug';
 import type { TransactionType } from '@/types/transaction';
 
@@ -14,11 +16,20 @@ interface TransactionModalProps {
 
 export default function TransactionModal({ open, onClose, drug, type }: TransactionModalProps) {
   const addMutation = useAddTransaction();
+  const { ready: referenceReady } = useDinReference();
 
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
   const [date, setDate] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Pack size from the CDSA/DPD reference, then this drug's Pack Size record;
+  // 1 means "record the entered quantity as-is".
+  const packSize = useMemo(
+    () => createPackSizeResolver([drug])(drug.din) ?? 1,
+    [drug, referenceReady]
+  );
+  const enteredQty = parseInt(quantity);
 
   useEffect(() => {
     if (open) {
@@ -48,8 +59,8 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
       next.quantity = 'Quantity is required';
     } else if (qty <= 0) {
       next.quantity = 'Quantity must be greater than 0';
-    } else if (isDispense && qty > drug.current_stock) {
-      next.quantity = `Cannot reduce more than current stock (${drug.current_stock})`;
+    } else if (isDispense && qty * packSize > drug.current_stock) {
+      next.quantity = `Cannot reduce more than current stock (${drug.current_stock} units)`;
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -61,18 +72,19 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
 
     try {
       const qty = parseInt(quantity);
+      const units = qty * packSize;
       await addMutation.mutateAsync({
         drug_id: drug.id,
         type,
-        quantity: qty,
+        quantity: units,
         notes: notes.trim() || null,
       });
       toast.success(
         isPurchase
-          ? `Added ${qty} units to ${drug.description}`
+          ? `Added ${units} units to ${drug.description}`
           : isDispense
-            ? `Reduced ${qty} units from ${drug.description}`
-            : `Adjusted stock for ${drug.description}`
+            ? `Reduced ${units} units from ${drug.description}`
+            : `Adjusted stock for ${drug.description} by ${units} units`
       );
       onClose();
     } catch (err) {
@@ -149,6 +161,14 @@ export default function TransactionModal({ open, onClose, drug, type }: Transact
                 autoFocus
               />
               {errors.quantity && <p className="mt-1 text-xs text-error-600">{errors.quantity}</p>}
+              {packSize > 1 && (
+                <p className="mt-1.5 text-xs text-neutral-500">
+                  Pack size {packSize}
+                  {!isNaN(enteredQty) && enteredQty > 0
+                    ? ` · ${enteredQty} × ${packSize} = ${enteredQty * packSize} units will be recorded`
+                    : ' · the quantity you enter is multiplied by the pack size'}
+                </p>
+              )}
             </div>
 
             <div>

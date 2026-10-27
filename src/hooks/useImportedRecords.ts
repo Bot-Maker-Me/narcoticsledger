@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
 import type { ParsedDinData } from '@/types/reconciliation';
 import type { TransactionType } from '@/types/transaction';
 
@@ -60,12 +61,15 @@ async function ensureDrugId(din: string, description?: string): Promise<string> 
   
   if (existing?.[0]?.id) return existing[0].id;
 
+  // Fall back to the CDSA/DPD reference for the product name and CDSA schedule.
+  const reference = getDinReferenceEntry(normalizedDin);
+
   const { data: created, error: createError } = await supabase
     .from('drugs')
     .insert({
       din: normalizedDin,
-      description: description?.trim() || `Imported DIN ${normalizedDin}`,
-      schedule: 'Verify',
+      description: description?.trim() || (reference ? referenceLabel(reference) : '') || `Imported DIN ${normalizedDin}`,
+      schedule: reference?.schedule ?? 'Verify',
     })
     .select('id')
     .single();

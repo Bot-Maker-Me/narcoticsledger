@@ -22,6 +22,13 @@ export interface FileParseResult {
   };
 }
 
+/**
+ * Returns the pack size for a DIN from the CDSA/DPD reference, or null when the DIN
+ * is unknown. When provided, every imported quantity is multiplied by it so the app
+ * stores total units instead of packs.
+ */
+export type PackSizeResolver = (din: string) => number | null;
+
 function createFilePreview(
   file: File,
   rows: ParsedRow[],
@@ -189,8 +196,8 @@ interface ParsedRow {
 function aggregateRows(
   rows: ParsedRow[],
   source: 'mckesson' | 'kroll',
-  drugs?: Map<string, { pack_size: number }>,
-  seenSignatures?: Set<string>
+  seenSignatures?: Set<string>,
+  packSizeFor?: PackSizeResolver
 ): Map<string, ParsedDinData> {
   if (rows.length === 0) return new Map();
 
@@ -216,6 +223,8 @@ function aggregateRows(
 
   const result = new Map<string, ParsedDinData>();
   let skippedCount = 0;
+  let packSizeMatches = 0;
+  let packSizeMisses = 0;
 
   for (const row of rows) {
     const din = normalizeDin(String(row[dinKey] ?? ''));
@@ -243,9 +252,19 @@ function aggregateRows(
       seenSignatures.add(signature);
     }
 
-    // Extract pack size from McKesson file (column or description)
+    // Convert to total units: the pack size for this DIN (CDSA/DPD reference or the
+    // drug record) wins, otherwise fall back to a pack size found inside the file.
     let packSize = 1;
-    if (source === 'mckesson') {
+    const resolvedPackSize = packSizeFor ? packSizeFor(din) : null;
+    const hasPackSize = resolvedPackSize !== null && resolvedPackSize > 0;
+    if (hasPackSize) {
+      packSize = resolvedPackSize as number;
+      packSizeMatches += 1;
+    } else {
+      packSizeMisses += 1;
+    }
+
+    if (source === 'mckesson' && !hasPackSize) {
       // Try to get pack size from column first
       if (packSizeKey) {
         const colPackSize = extractNumber(row[packSizeKey]);
@@ -296,13 +315,14 @@ function aggregateRows(
         }
       }
 
-      // Multiply quantity by pack size for purchases
-      if (packSize > 1) {
-        console.log(`DIN ${din}: Quantity ${qty} x Pack Size ${packSize} = ${qty * packSize}`);
-        qty = qty * packSize;
-      }
     }
-    
+
+    // Quantities are always recorded as total units (packs x pack size).
+    if (packSize > 1) {
+      console.log(`DIN ${din}: Quantity ${qty} x Pack Size ${packSize} = ${qty * packSize}`);
+      qty = qty * packSize;
+    }
+
     let transactionType: 'purchase' | 'dispense';
     
     if (source === 'mckesson') {
@@ -341,6 +361,11 @@ function aggregateRows(
     result.set(din, existing);
   }
 
+  if (packSizeFor) {
+    console.log(
+      `[file-parser] ${source}: pack size applied to ${packSizeMatches} rows, ${packSizeMisses} rows had no pack size`
+    );
+  }
   console.log(`Aggregated ${rows.length} rows for ${source}, skipped ${skippedCount} duplicates`);
   return result;
 }
@@ -349,7 +374,8 @@ function aggregateRows(
 function parseIndividualRows(
   rows: ParsedRow[],
   source: 'mckesson' | 'kroll',
-  seenSignatures?: Set<string>
+  seenSignatures?: Set<string>,
+  packSizeFor?: PackSizeResolver
 ): Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }> {
   if (rows.length === 0) return [];
 
@@ -392,9 +418,17 @@ function parseIndividualRows(
       seenSignatures.add(signature);
     }
 
-    // Extract pack size from McKesson file
+    // Convert to total units: the pack size for this DIN (CDSA/DPD reference or the
+    // drug record) wins, otherwise fall back to a pack size found inside the file.
     let packSize = 1;
-    if (source === 'mckesson') {
+    const resolvedPackSize = packSizeFor ? packSizeFor(din) : null;
+    const hasPackSize = resolvedPackSize !== null && resolvedPackSize > 0;
+    if (hasPackSize) {
+      packSize = resolvedPackSize as number;
+      console.log(`DIN ${din}: Pack size ${packSize} applied to quantity ${qty}`);
+    }
+
+    if (source === 'mckesson' && !hasPackSize) {
       if (packSizeKey) {
         const colPackSize = extractNumber(row[packSizeKey]);
         if (colPackSize > 1) {
@@ -430,11 +464,13 @@ function parseIndividualRows(
         }
       }
 
-      if (packSize > 1) {
-        qty = qty * packSize;
-      }
     }
-    
+
+    // Quantities are always recorded as total units (packs x pack size).
+    if (packSize > 1) {
+      qty = qty * packSize;
+    }
+
     let transactionType: 'purchase' | 'dispense';
     
     if (source === 'mckesson') {
@@ -473,12 +509,13 @@ function parseIndividualRows(
 
 export async function parseReconciliationFiles(
   mckessonFile: File,
-  krollFile: File
+  krollFile: File,
+  packSizeFor?: PackSizeResolver
 ): Promise<FileParseResult> {
   console.log('Parsing reconciliation files', { mckesson: mckessonFile.name, kroll: krollFile.name });
-  const mckessonResult = await parseSingleFileWithPreview(mckessonFile, 'mckesson');
+  const mckessonResult = await parseSingleFileWithPreview(mckessonFile, 'mckesson', undefined, packSizeFor);
   console.log('McKesson file parsed', { dataSize: mckessonResult.data.size });
-  const krollResult = await parseSingleFileWithPreview(krollFile, 'kroll');
+  const krollResult = await parseSingleFileWithPreview(krollFile, 'kroll', undefined, packSizeFor);
   console.log('Kroll file parsed', { dataSize: krollResult.data.size });
   
   return {
@@ -494,8 +531,8 @@ export async function parseReconciliationFiles(
 export async function parseSingleFileWithPreview(
   file: File,
   source: 'mckesson' | 'kroll',
-  drugs?: Map<string, { pack_size: number }>,
-  seenSignatures?: Set<string>
+  seenSignatures?: Set<string>,
+  packSizeFor?: PackSizeResolver
 ): Promise<{ data: Map<string, ParsedDinData>; preview: FilePreview }> {
   const ext = file.name.split('.').pop()?.toLowerCase();
 
@@ -520,7 +557,7 @@ export async function parseSingleFileWithPreview(
     throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
   }
 
-  const data = aggregateRows(rows, source, drugs, seenSignatures);
+  const data = aggregateRows(rows, source, seenSignatures, packSizeFor);
   const preview = createFilePreview(file, rows, data.size);
 
   return { data, preview };
@@ -529,7 +566,8 @@ export async function parseSingleFileWithPreview(
 export async function parseSingleFileWithIndividualRows(
   file: File,
   source: 'mckesson' | 'kroll',
-  seenSignatures?: Set<string>
+  seenSignatures?: Set<string>,
+  packSizeFor?: PackSizeResolver
 ): Promise<{ data: Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }>; preview: FilePreview }> {
   const ext = file.name.split('.').pop()?.toLowerCase();
 
@@ -554,7 +592,7 @@ export async function parseSingleFileWithIndividualRows(
     throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
   }
 
-  const data = parseIndividualRows(rows, source, seenSignatures);
+  const data = parseIndividualRows(rows, source, seenSignatures, packSizeFor);
   const preview = createFilePreview(file, rows, data.length);
 
   return { data, preview };
@@ -563,7 +601,8 @@ export async function parseSingleFileWithIndividualRows(
 export async function parseSingleFile(
   file: File,
   source: 'mckesson' | 'kroll',
-  seenSignatures?: Set<string>
+  seenSignatures?: Set<string>,
+  packSizeFor?: PackSizeResolver
 ): Promise<Map<string, ParsedDinData>> {
   const ext = file.name.split('.').pop()?.toLowerCase();
 
@@ -574,7 +613,7 @@ export async function parseSingleFile(
         skipEmptyLines: true,
         complete: (results) => {
           try {
-            resolve(aggregateRows(results.data, source, undefined, seenSignatures));
+            resolve(aggregateRows(results.data, source, seenSignatures, packSizeFor));
           } catch (err) {
             reject(err);
           }
@@ -590,7 +629,7 @@ export async function parseSingleFile(
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
-    return aggregateRows(rows, source, undefined, seenSignatures);
+    return aggregateRows(rows, source, seenSignatures, packSizeFor);
   }
 
   throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);

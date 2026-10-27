@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { parseSingleFile, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
+import { createPackSizeResolver, ensureDinReference } from '@/lib/dinReference';
+import { useDrugs } from '@/hooks/useDrugs';
 import type { ParsedDinData } from '@/types/reconciliation';
 import {
   useImportedRecords,
@@ -67,6 +69,7 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
   const meta = KIND_META[kind];
   const Icon = meta.icon;
   const { data: savedRecords, isLoading: savedLoading } = useImportedRecords(kind);
+  const { data: drugs } = useDrugs();
   const saveMutation = useSaveImportedRecords(kind);
   const deleteMutation = useDeleteImportedFile(kind);
 
@@ -123,6 +126,11 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
     try {
       console.log(`Starting to process ${files.length} files...`);
 
+      // Quantities are converted to total units via the CDSA/DPD reference and the
+      // Pack Size stored on each drug record.
+      await ensureDinReference();
+      const packSizeFor = createPackSizeResolver(drugs ?? []);
+
       // Create SHARED deduplication set to catch duplicates across multiple files
       const seenSignatures = new Set<string>();
       let allData = new Map<string, any>();
@@ -131,7 +139,7 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
       // Process all files
       for (const file of files) {
         console.log(`Processing file: ${file.name}`);
-        const { data, preview } = await parseSingleFileWithPreview(file, meta.parseSource, undefined, seenSignatures);
+        const { data, preview } = await parseSingleFileWithPreview(file, meta.parseSource, seenSignatures, packSizeFor);
 
         for (const [din, itemData] of data) {
           const existing = allData.get(din);

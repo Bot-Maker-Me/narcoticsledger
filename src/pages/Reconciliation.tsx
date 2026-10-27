@@ -33,6 +33,15 @@ import {
   computeFlag,
 } from '@/hooks/useReconciliation';
 import { parseReconciliationFiles, mergeDinData, deduplicateDinData, parseSingleFile, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
+import {
+  createPackSizeResolver,
+  ensureDinReference,
+  getDinReferenceEntry,
+  getDinReferencePackSizeCount,
+  getDinReferenceSize,
+  isDinReferenceReady,
+  referenceLabel,
+} from '@/lib/dinReference';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV, exportToPDF } from '@/lib/exportUtils';
 import type {
@@ -115,6 +124,25 @@ export default function Reconciliation() {
   const [activeCycleId, setActiveCycleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
+
+  // CDSA/DPD reference used to identify DINs and to turn pack quantities into units.
+  const [dinReference, setDinReference] = useState<{ dinCount: number; packSizeCount: number } | null>(
+    isDinReferenceReady()
+      ? { dinCount: getDinReferenceSize(), packSizeCount: getDinReferencePackSizeCount() }
+      : null
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    ensureDinReference().then(() => {
+      if (!cancelled) {
+        setDinReference({ dinCount: getDinReferenceSize(), packSizeCount: getDinReferencePackSizeCount() });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // New states for enhanced features
   const [searchQuery, setSearchQuery] = useState('');
@@ -353,6 +381,9 @@ export default function Reconciliation() {
     });
   }, []);
 
+  // Pack size per DIN: CDSA/DPD reference first, then the drug record's Pack Size.
+  const packSizeFor = useMemo(() => createPackSizeResolver(drugs ?? []), [drugs]);
+
   const drugMap = useMemo(() => {
     const map = new Map<string, { id: string; description: string; schedule: string; current_stock: number; pack_size: number }>();
     for (const drug of drugs ?? []) {
@@ -521,6 +552,10 @@ export default function Reconciliation() {
     try {
       console.log('Starting file processing for multiple files...');
 
+      // Every imported DIN is matched against the CDSA/DPD reference.
+      await ensureDinReference();
+      setDinReference({ dinCount: getDinReferenceSize(), packSizeCount: getDinReferencePackSizeCount() });
+
       // Create SHARED deduplication sets for each file type (to catch duplicates across multiple files)
       const mckessonSignatures = new Set<string>();
       const krollSignatures = new Set<string>();
@@ -532,7 +567,7 @@ export default function Reconciliation() {
       for (const file of mckessonFiles) {
         console.log(`Processing McKesson file: ${file.name}`);
         // Pass the SHARED signature set so duplicates across files are caught
-        const { data, preview } = await parseSingleFileWithPreview(file, 'mckesson', drugMap, mckessonSignatures);
+        const { data, preview } = await parseSingleFileWithPreview(file, 'mckesson', mckessonSignatures, packSizeFor);
 
         for (const [din, itemData] of data) {
           const existing = allMckessonData.get(din);
@@ -555,7 +590,7 @@ export default function Reconciliation() {
       for (const file of krollFiles) {
         console.log(`Processing Kroll file: ${file.name}`);
         // Pass the SHARED signature set so duplicates across files are caught
-        const { data, preview } = await parseSingleFileWithPreview(file, 'kroll', undefined, krollSignatures);
+        const { data, preview } = await parseSingleFileWithPreview(file, 'kroll', krollSignatures, packSizeFor);
 
         for (const [din, itemData] of data) {
           const existing = allKrollData.get(din);
@@ -704,13 +739,24 @@ export default function Reconciliation() {
 
         console.log(`Creating item for DIN ${din}: openingBalance=${openingBalance}, drug=${drug?.description}`);
 
-        const description = drug?.description ?? (data.description as string | undefined) ?? 'Unknown drug';
-        
+        // Description and schedule come from the drug record, then the CDSA/DPD
+        // reference, then the text inside the uploaded file.
+        const reference = getDinReferenceEntry(din);
+        const drugDescription =
+          drug?.description && !drug.description.startsWith('Imported DIN')
+            ? drug.description
+            : reference
+              ? referenceLabel(reference) || undefined
+              : undefined;
+        const description = drugDescription ?? (data.description as string | undefined) ?? 'Unknown drug';
+        const schedule =
+          drug?.schedule && drug.schedule !== 'Verify' ? drug.schedule : reference?.schedule ?? 'Verify';
+
         items.push({
           din,
           drug_id: drug?.id ?? null,
           description: description,
-          schedule: 'Verify',
+          schedule: schedule,
           opening_balance: openingBalance,
           purchased_count: data.purchased,
           dispensed_count: data.dispensed,
@@ -932,6 +978,7 @@ export default function Reconciliation() {
           cycles={cycles ?? []}
           cyclesLoading={cyclesLoading}
           startFromPreviousMode={startFromPreviousMode}
+          dinReference={dinReference}
           savedCountFile={savedCountFile}
           savedCountDragOver={savedCountDragOver}
           hasExistingData={existingMckessonData.size > 0 || existingKrollData.size > 0}
@@ -1111,6 +1158,7 @@ interface LandingViewProps {
   cycles: { id: string; status: string; created_at: string }[];
   cyclesLoading: boolean;
   startFromPreviousMode: 'database' | 'file' | 'zero';
+  dinReference: { dinCount: number; packSizeCount: number } | null;
   savedCountFile: File | null;
   savedCountDragOver: boolean;
   hasExistingData: boolean;
@@ -1186,6 +1234,30 @@ function LandingView(props: LandingViewProps) {
           </div>
         </div>
       )}
+
+      <div className="mb-6 card p-4">
+        <div className="flex items-start gap-3">
+          <FileSpreadsheet className="mt-0.5 h-5 w-5 shrink-0 text-primary-600" />
+          <div>
+            <p className="text-sm font-medium text-neutral-800">
+              {props.dinReference === null
+                ? 'Loading DIN reference…'
+                : props.dinReference.dinCount > 0
+                  ? `${props.dinReference.dinCount} DINs in the CDSA/DPD reference`
+                  : 'CDSA/DPD reference unavailable'}
+            </p>
+            <p className="text-xs text-neutral-500">
+              {props.dinReference === null
+                ? 'DINs are matched and quantities converted to total units once the reference is ready.'
+                : props.dinReference.packSizeCount > 0
+                  ? "Every DIN from uploaded files and manual entries is matched to this reference for the product name, CDSA schedule and pack size (unmatched DINs are retried with a leading zero), then multiplied by that pack size to record total units."
+                  : props.dinReference.dinCount > 0
+                    ? "Every DIN from uploaded files and manual entries is matched to this reference for the product name and CDSA schedule (unmatched DINs are retried with a leading zero). Quantities are multiplied by each drug's Pack Size to record total units."
+                    : "Quantities are multiplied by each drug's Pack Size to record total units."}
+            </p>
+          </div>
+        </div>
+      </div>
 
       <div className="mb-6 card p-6">
         <h3 className="mb-4 text-lg font-semibold text-neutral-900">Starting Count Option</h3>
