@@ -14,6 +14,5 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    redirectURL: window.location.origin, // Use current origin for redirects
   },
 });
