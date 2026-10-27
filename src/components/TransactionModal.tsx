@@ -1,9 +1,7 @@
-import { useState, useEffect, useMemo, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { X, Loader2, Plus, Minus, Package } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAddTransaction } from '@/hooks/useTransactions';
-import { useDinReference } from '@/hooks/useDinReference';
-import { createPackSizeResolver } from '@/lib/dinReference';
 import type { DrugWithStock } from '@/types/drug';
 import type { TransactionType } from '@/types/transaction';
 
@@ -16,19 +14,13 @@ interface TransactionModalProps {
 
 export default function TransactionModal({ open, onClose, drug, type }: TransactionModalProps) {
   const addMutation = useAddTransaction();
-  const { ready: referenceReady } = useDinReference();
-
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
   const [date, setDate] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Pack size from the CDSA/DPD reference, then this drug's Pack Size record;
-  // 1 means "record the entered quantity as-is".
-  const packSize = useMemo(
-    () => createPackSizeResolver([drug])(drug.din) ?? 1,
-    [drug, referenceReady]
-  );
+  // Quantities are multiplied by this drug's Pack Size; 1 means "record as entered".
+  const packSize = drug.pack_size > 1 ? drug.pack_size : 1;
   const enteredQty = parseInt(quantity);
 
   useEffect(() => {

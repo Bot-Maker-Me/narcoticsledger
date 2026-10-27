@@ -2,7 +2,7 @@ import { useState, useEffect, type FormEvent } from 'react';
 import { X, Loader2, Pill } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useCreateDrug, useUpdateDrug, useCheckDinUnique } from '@/hooks/useDrugs';
-import { useDinReference } from '@/hooks/useDinReference';
+import { useDinReferenceEntry } from '@/hooks/useDinReference';
 import { referenceLabel } from '@/lib/dinReference';
 import { SCHEDULES, type Drug, type DrugFormData, type DrugSchedule } from '@/types/drug';
 
@@ -17,7 +17,6 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
   const createMutation = useCreateDrug();
   const updateMutation = useUpdateDrug();
   const dinCheckMutation = useCheckDinUnique();
-  const { referenceFor } = useDinReference();
 
   const [form, setForm] = useState<DrugFormData>({
     din: '',
@@ -112,24 +111,32 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
 
-  // Match the entered DIN against the CDSA/DPD reference to fill the pack size.
-  const referenceMatch = form.din.length === 8 ? referenceFor(form.din) : null;
+  // Match the entered DIN against the server-side CDSA/DPD reference.
+  const { entry: referenceMatch, loading: referenceLoading } = useDinReferenceEntry(
+    form.din.length === 8 ? form.din : null
+  );
 
   const handleDinChange = (value: string) => {
     const din = value.replace(/\D/g, '');
-    const reference = din.length === 8 ? referenceFor(din) : null;
+    setForm((current) => ({ ...current, din }));
+  };
+
+  // Fill the product details once the reference lookup resolves.
+  useEffect(() => {
+    if (!referenceMatch) return;
     setForm((current) => {
-      if (!reference) return { ...current, din };
-      const label = referenceLabel(reference);
+      if (current.din !== referenceMatch.din) return current;
+      const label = referenceLabel(referenceMatch);
       return {
         ...current,
-        din,
-        pack_size: reference.packSize > 0 ? reference.packSize : current.pack_size,
-        schedule: reference.schedule ?? current.schedule,
+        schedule:
+          current.schedule === 'Verify' && referenceMatch.schedule
+            ? referenceMatch.schedule
+            : current.schedule,
         description: current.description.trim() === '' && label ? label : current.description,
       };
     });
-  };
+  }, [referenceMatch]);
 
   if (!open) return null;
 
@@ -183,11 +190,12 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
                     CDSA/DPD match: {referenceMatch.description ?? 'reference product'}
                     {referenceMatch.strength ? ` ${referenceMatch.strength}` : ''}
                     {referenceMatch.schedule ? ` · ${referenceMatch.schedule}` : ''}
-                    {referenceMatch.packSize > 0 ? ` · pack size ${referenceMatch.packSize}` : ''}
                   </p>
+                ) : referenceLoading ? (
+                  <p className="mt-1 text-xs text-neutral-400">Checking the DIN reference…</p>
                 ) : (
                   <p className="mt-1 text-xs text-neutral-400">
-                    No CDSA/DPD match for this DIN — enter the pack size manually.
+                    No CDSA/DPD match for this DIN — check the DIN and enter the product details.
                   </p>
                 ))}
             </div>

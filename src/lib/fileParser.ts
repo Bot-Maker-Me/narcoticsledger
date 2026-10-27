@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
+import { fetchReferenceEntries } from '@/lib/dinReference';
 import type { ParsedDinData } from '@/types/reconciliation';
 
 export interface FilePreview {
@@ -191,6 +192,26 @@ function findColumnKey(
 
 interface ParsedRow {
   [key: string]: unknown;
+}
+
+/**
+ * Resolves the server-side CDSA/DPD reference for every DIN in the file before the rows
+ * are aggregated, so drug names, schedules and pack sizes are available while parsing.
+ */
+async function prefetchDinReference(rows: ParsedRow[]): Promise<void> {
+  if (rows.length === 0) return;
+
+  const dinKey = findColumnKey(
+    Object.keys(rows[0]),
+    ['DIN', 'Drug Identification Number', 'DIN/PIN', 'drug id']
+  );
+  if (!dinKey) return;
+
+  try {
+    await fetchReferenceEntries(rows.map((row) => String(row[dinKey] ?? '')));
+  } catch (error) {
+    console.error('[file-parser] DIN reference lookup failed:', error);
+  }
 }
 
 function aggregateRows(
@@ -557,6 +578,8 @@ export async function parseSingleFileWithPreview(
     throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
   }
 
+  await prefetchDinReference(rows);
+
   const data = aggregateRows(rows, source, seenSignatures, packSizeFor);
   const preview = createFilePreview(file, rows, data.size);
 
@@ -592,6 +615,8 @@ export async function parseSingleFileWithIndividualRows(
     throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
   }
 
+  await prefetchDinReference(rows);
+
   const data = parseIndividualRows(rows, source, seenSignatures, packSizeFor);
   const preview = createFilePreview(file, rows, data.length);
 
@@ -606,33 +631,29 @@ export async function parseSingleFile(
 ): Promise<Map<string, ParsedDinData>> {
   const ext = file.name.split('.').pop()?.toLowerCase();
 
+  let rows: ParsedRow[] = [];
+
   if (ext === 'csv' || ext === 'txt') {
-    return new Promise((resolve, reject) => {
+    rows = await new Promise<ParsedRow[]>((resolve, reject) => {
       Papa.parse<ParsedRow>(file, {
         header: true,
         skipEmptyLines: true,
-        complete: (results) => {
-          try {
-            resolve(aggregateRows(results.data, source, seenSignatures, packSizeFor));
-          } catch (err) {
-            reject(err);
-          }
-        },
+        complete: (results) => resolve(results.data),
         error: (err) => reject(new Error(`Failed to parse CSV: ${err.message}`)),
       });
     });
-  }
-
-  if (ext === 'xlsx' || ext === 'xls') {
+  } else if (ext === 'xlsx' || ext === 'xls') {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
-    return aggregateRows(rows, source, seenSignatures, packSizeFor);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    rows = XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
+  } else {
+    throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
   }
 
-  throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
+  await prefetchDinReference(rows);
+
+  return aggregateRows(rows, source, seenSignatures, packSizeFor);
 }
 
 export function mergeDinData(

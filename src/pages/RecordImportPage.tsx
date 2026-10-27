@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { parseSingleFile, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
-import { createPackSizeResolver, ensureDinReference } from '@/lib/dinReference';
+import { createPackSizeResolver } from '@/lib/dinReference';
 import { useDrugs } from '@/hooks/useDrugs';
 import type { ParsedDinData } from '@/types/reconciliation';
 import {
@@ -126,9 +126,7 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
     try {
       console.log(`Starting to process ${files.length} files...`);
 
-      // Quantities are converted to total units via the CDSA/DPD reference and the
-      // Pack Size stored on each drug record.
-      await ensureDinReference();
+      // Quantities are converted to total units via each drug record's Pack Size.
       const packSizeFor = createPackSizeResolver(drugs ?? []);
 
       // Create SHARED deduplication set to catch duplicates across multiple files

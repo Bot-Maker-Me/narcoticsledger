@@ -1,30 +1,48 @@
 import { useEffect, useState } from 'react';
-import { getDinReferenceEntry, isDinReferenceReady, loadDinReference } from '@/lib/dinReference';
+import {
+  fetchReferenceEntries,
+  getDinReferenceEntry,
+  type DinReferenceEntry,
+} from '@/lib/dinReference';
+
+interface DinReferenceLookup {
+  entry: DinReferenceEntry | null;
+  loading: boolean;
+}
 
 /**
- * Gives components access to the CDSA/DPD DIN reference so entered DINs can be matched
- * to the reference product, its CDSA schedule and its pack size. Lookups stay
- * synchronous once the reference is ready.
+ * Resolves a single DIN against the server-side CDSA/DPD reference, fetching it on demand
+ * and reusing the cached entry on later renders.
  */
-export function useDinReference() {
-  const [ready, setReady] = useState(isDinReferenceReady());
+export function useDinReferenceEntry(din: string | null | undefined): DinReferenceLookup {
+  const [lookup, setLookup] = useState<DinReferenceLookup>(() => ({
+    entry: getDinReferenceEntry(din ?? ''),
+    loading: false,
+  }));
 
   useEffect(() => {
+    if (!din) {
+      setLookup({ entry: null, loading: false });
+      return;
+    }
+
+    const cached = getDinReferenceEntry(din);
+    if (cached) {
+      setLookup({ entry: cached, loading: false });
+      return;
+    }
+
     let cancelled = false;
-    loadDinReference()
-      .then(() => {
-        if (!cancelled) setReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) setReady(false);
-      });
+    setLookup({ entry: null, loading: true });
+
+    fetchReferenceEntries([din]).then(() => {
+      if (!cancelled) setLookup({ entry: getDinReferenceEntry(din), loading: false });
+    });
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [din]);
 
-  return {
-    ready,
-    referenceFor: getDinReferenceEntry,
-  };
+  return lookup;
 }

@@ -33,15 +33,7 @@ import {
   computeFlag,
 } from '@/hooks/useReconciliation';
 import { parseReconciliationFiles, mergeDinData, deduplicateDinData, parseSingleFile, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
-import {
-  createPackSizeResolver,
-  ensureDinReference,
-  getDinReferenceEntry,
-  getDinReferencePackSizeCount,
-  getDinReferenceSize,
-  isDinReferenceReady,
-  referenceLabel,
-} from '@/lib/dinReference';
+import { createPackSizeResolver, getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
 import { supabase } from '@/lib/supabase';
 import { exportToCSV, exportToPDF } from '@/lib/exportUtils';
 import type {
@@ -125,24 +117,6 @@ export default function Reconciliation() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
 
-  // CDSA/DPD reference used to identify DINs and to turn pack quantities into units.
-  const [dinReference, setDinReference] = useState<{ dinCount: number; packSizeCount: number } | null>(
-    isDinReferenceReady()
-      ? { dinCount: getDinReferenceSize(), packSizeCount: getDinReferencePackSizeCount() }
-      : null
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    ensureDinReference().then(() => {
-      if (!cancelled) {
-        setDinReference({ dinCount: getDinReferenceSize(), packSizeCount: getDinReferencePackSizeCount() });
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // New states for enhanced features
   const [searchQuery, setSearchQuery] = useState('');
@@ -551,10 +525,6 @@ export default function Reconciliation() {
     setParsing(true);
     try {
       console.log('Starting file processing for multiple files...');
-
-      // Every imported DIN is matched against the CDSA/DPD reference.
-      await ensureDinReference();
-      setDinReference({ dinCount: getDinReferenceSize(), packSizeCount: getDinReferencePackSizeCount() });
 
       // Create SHARED deduplication sets for each file type (to catch duplicates across multiple files)
       const mckessonSignatures = new Set<string>();
@@ -978,7 +948,6 @@ export default function Reconciliation() {
           cycles={cycles ?? []}
           cyclesLoading={cyclesLoading}
           startFromPreviousMode={startFromPreviousMode}
-          dinReference={dinReference}
           drugCount={drugs?.length ?? 0}
           packedDrugCount={(drugs ?? []).filter((drug) => drug.pack_size > 1).length}
           savedCountFile={savedCountFile}
@@ -1160,7 +1129,6 @@ interface LandingViewProps {
   cycles: { id: string; status: string; created_at: string }[];
   cyclesLoading: boolean;
   startFromPreviousMode: 'database' | 'file' | 'zero';
-  dinReference: { dinCount: number; packSizeCount: number } | null;
   drugCount: number;
   packedDrugCount: number;
   savedCountFile: File | null;
@@ -1243,21 +1211,11 @@ function LandingView(props: LandingViewProps) {
         <div className="flex items-start gap-3">
           <FileSpreadsheet className="mt-0.5 h-5 w-5 shrink-0 text-primary-600" />
           <div>
-            <p className="text-sm font-medium text-neutral-800">
-              {props.dinReference === null
-                ? 'Loading DIN reference…'
-                : props.dinReference.dinCount > 0
-                  ? `${props.dinReference.dinCount} DINs in the CDSA/DPD reference`
-                  : 'CDSA/DPD reference unavailable'}
-            </p>
+            <p className="text-sm font-medium text-neutral-800">Pack size conversion</p>
             <p className="text-xs text-neutral-500">
-              {props.dinReference === null
-                ? 'DINs are matched and quantities converted to total units once the reference is ready.'
-                : props.dinReference.packSizeCount > 0
-                  ? "Every DIN from uploaded files and manual entries is matched to this reference for the product name, CDSA schedule and pack size (unmatched DINs are retried with a leading zero), then multiplied by that pack size to record total units."
-                  : props.dinReference.dinCount > 0
-                    ? "Every DIN from uploaded files and manual entries is matched to this reference for the product name and CDSA schedule (unmatched DINs are retried with a leading zero). Quantities are multiplied by each drug's Pack Size to record total units."
-                    : "Quantities are multiplied by each drug's Pack Size to record total units."}
+              Every DIN from uploaded files and manual entries is matched to the CDSA/DPD drug
+              reference for the product name and CDSA schedule (unmatched DINs are retried with a
+              leading zero). Quantities are multiplied by each drug's Pack Size to record total units.
             </p>
             {props.drugCount > 0 && (
               <p className="mt-1 text-xs text-neutral-400">
