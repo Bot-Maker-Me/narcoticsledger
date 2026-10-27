@@ -1,3 +1,4 @@
+# Logs
 logs
 *.log
 npm-debug.log*
@@ -6,11 +7,13 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies & build
 node_modules
 dist
 dist-ssr
 *.local
 
+# Editor / OS
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -20,11 +23,20 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Secrets & local env
 .env
 .env.local
 .env.*.local
+.env.development
+.env.production
 
-# Supabase temp files with secrets
+# Supabase / Vercel local
 supabase/.temp/
-
 .vercel
+
+# Sensitive / large dumps (never commit)
+backup.sql
+*.dump
+*.bak
+**/service_role*
