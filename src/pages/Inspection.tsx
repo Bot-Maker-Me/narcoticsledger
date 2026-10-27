@@ -41,7 +41,7 @@ export default function Inspection() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-neutral-900">Inspection Spot Check</h1>
+      <h1 className="font-display text-3xl text-neutral-900">Inspection Spot Check</h1>
       <p className="mt-1 mb-6 text-sm text-neutral-500">
         Pull any past reconciliation in seconds, and investigate records within two days of the last count.
       </p>
@@ -106,7 +106,7 @@ export default function Inspection() {
       <div className="card p-5">
         <h2 className="mb-3 text-sm font-semibold">Investigate by DIN (last 2 days of counts)</h2>
         <div className="relative max-w-md">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
           <input className="input-field pl-10" placeholder="Enter DIN" value={din} onChange={(e) => setDin(e.target.value)} />
         </div>
         <ul className="mt-4 space-y-2 text-sm">

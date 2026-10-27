@@ -28,35 +28,35 @@ export default function CookieConsent() {
   if (!isVisible) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-neutral-900 text-white p-4 shadow-lg">
-      <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-start gap-3 flex-1">
-          <Cookie className="h-5 w-5 text-primary-400 mt-0.5 flex-shrink-0" />
+    <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-ink-900/95 p-4 backdrop-blur-md">
+      <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+        <div className="flex flex-1 items-start gap-3">
+          <Cookie className="mt-0.5 h-5 w-5 flex-shrink-0 text-primary-500" />
           <div className="text-sm">
-            <p className="font-medium mb-1">Cookie & Privacy Consent</p>
-            <p className="text-neutral-300 text-xs">
+            <p className="mb-1 font-medium text-neutral-800">Cookie &amp; Privacy Consent</p>
+            <p className="text-xs text-neutral-500">
               We use cookies and similar technologies to provide our services, analyze usage, and comply with Canadian privacy laws (PIPEDA). 
-              By continuing, you agree to our use of cookies for these purposes. <a href="/terms" className="text-primary-400 hover:text-primary-300 underline">Learn more</a>
+              By continuing, you agree to our use of cookies for these purposes. <a href="/terms" className="text-primary-500 underline hover:text-primary-700">Learn more</a>
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex flex-shrink-0 items-center gap-2">
           <button
             onClick={handleDecline}
-            className="px-3 py-1.5 text-xs font-medium text-neutral-300 hover:text-white transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-neutral-500 transition-colors hover:text-neutral-800"
           >
             Decline
           </button>
           <button
             onClick={handleAccept}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors"
+            className="btn-primary gap-1.5 px-4 py-1.5 text-xs"
           >
             <Check className="h-3.5 w-3.5" />
             Accept
           </button>
           <button
             onClick={() => setIsVisible(false)}
-            className="p-1.5 text-neutral-400 hover:text-white transition-colors"
+            className="p-1.5 text-neutral-400 transition-colors hover:text-neutral-700"
           >
             <X className="h-4 w-4" />
           </button>

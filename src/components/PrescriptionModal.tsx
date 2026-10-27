@@ -111,13 +111,13 @@ export default function PrescriptionModal({ open, onClose }: PrescriptionModalPr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
       <div className="relative w-full max-w-lg animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="card overflow-hidden">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-neutral-100 px-6 py-4 sticky top-0 bg-white z-10">
+          <div className="flex items-center justify-between border-b border-neutral-100 px-6 py-4 sticky top-0 bg-surface z-10">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary-50">
                 <FileText className="h-5 w-5 text-secondary-600" />
@@ -258,7 +258,7 @@ export default function PrescriptionModal({ open, onClose }: PrescriptionModalPr
                       setImageFile(null);
                       setImagePreview(null);
                     }}
-                    className="absolute right-2 top-2 rounded-lg bg-white/90 p-1.5 text-neutral-500 shadow-soft transition-colors hover:text-error-600"
+                    className="absolute right-2 top-2 rounded-lg bg-ink-950/70 p-1.5 text-cream-50/80 shadow-soft backdrop-blur-sm transition-colors hover:text-primary-500"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -274,13 +274,13 @@ export default function PrescriptionModal({ open, onClose }: PrescriptionModalPr
                   />
                   <ImageIcon className="h-8 w-8 text-neutral-300" />
                   <span className="mt-2 text-sm text-neutral-400">Click to upload an image</span>
-                  <span className="mt-0.5 text-xs text-neutral-300">PNG, JPG up to 5MB</span>
+                  <span className="mt-0.5 text-xs text-neutral-500">PNG, JPG up to 5MB</span>
                 </label>
               )}
             </div>
 
             {/* Actions */}
-            <div className="flex justify-end gap-3 pt-2 sticky bottom-0 bg-white">
+            <div className="flex justify-end gap-3 pt-2 sticky bottom-0 bg-surface">
               <button type="button" onClick={onClose} className="btn-secondary" disabled={isSubmitting}>
                 Cancel
               </button>

@@ -17,6 +17,7 @@ import {
 import type { PrescriptionWithDrug, PrescriptionStatus } from '@/types/prescription';
 import PrescriptionModal from '@/components/PrescriptionModal';
 import DispenseModal from '@/components/DispenseModal';
+import SectionMarker from '@/components/SectionMarker';
 
 const statusConfig: Record<
   PrescriptionStatus,
@@ -93,7 +94,8 @@ export default function Prescriptions() {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Prescriptions</h1>
+          <SectionMarker index="01" label="Prescriptions" />
+          <h1 className="mt-4 font-display text-3xl text-neutral-900">Prescriptions</h1>
           <p className="mt-1 text-sm text-neutral-500">Manage prescriptions and dispensing</p>
         </div>
         <button className="btn-primary mt-4 sm:mt-0" onClick={() => setModalOpen(true)}>
@@ -106,7 +108,7 @@ export default function Prescriptions() {
         {/* Toolbar */}
         <div className="flex flex-col gap-3 border-b border-neutral-100 p-4 sm:flex-row sm:items-center">
           <div className="relative flex-1 sm:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
             <input
               type="text"
               value={search}
@@ -129,7 +131,7 @@ export default function Prescriptions() {
             {filterOpen && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setFilterOpen(false)} />
-                <div className="absolute right-0 top-full z-40 mt-2 w-40 animate-slide-up rounded-lg border border-neutral-100 bg-white shadow-elevated">
+                <div className="absolute right-0 top-full z-40 mt-2 w-40 animate-slide-up rounded-lg border border-white/10 bg-surface shadow-elevated">
                   {(['All', 'active', 'completed', 'cancelled'] as const).map((option) => (
                     <button
                       key={option}
@@ -302,7 +304,7 @@ export default function Prescriptions() {
       {cancelTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
-            className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm animate-fade-in"
+            className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm animate-fade-in"
             onClick={() => setCancelTarget(null)}
           />
           <div className="relative w-full max-w-sm animate-slide-up">
@@ -323,7 +325,7 @@ export default function Prescriptions() {
                 <button
                   onClick={handleCancel}
                   disabled={cancelMutation.isPending}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-warning-600 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-warning-700 active:scale-[0.98] disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-warning-600 px-4 py-2.5 text-sm font-medium text-ink-950 transition-all hover:bg-warning-700 active:scale-[0.98] disabled:opacity-50"
                 >
                   {cancelMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -342,7 +344,7 @@ export default function Prescriptions() {
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
-            className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm animate-fade-in"
+            className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm animate-fade-in"
             onClick={() => setDeleteTarget(null)}
           />
           <div className="relative w-full max-w-sm animate-slide-up">
@@ -363,7 +365,7 @@ export default function Prescriptions() {
                 <button
                   onClick={handleDelete}
                   disabled={deleteMutation.isPending}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-error-600 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-error-700 active:scale-[0.98] disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-error-500 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-error-400 active:scale-[0.98] disabled:opacity-50"
                 >
                   {deleteMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

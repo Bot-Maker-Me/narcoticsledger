@@ -13,7 +13,7 @@ export default function Terms() {
         <div className="card p-8">
           <div className="flex items-center gap-3 mb-6">
             <FileText className="h-6 w-6 text-primary-600" />
-            <h1 className="text-2xl font-bold text-neutral-900">Terms of Service</h1>
+            <h1 className="font-display text-3xl text-neutral-900">Terms of Service</h1>
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
             <p><strong>Last Updated:</strong> {new Date().toLocaleDateString()}</p>
@@ -76,7 +76,7 @@ export default function Terms() {
         <div className="card p-8">
           <div className="flex items-center gap-3 mb-6">
             <Shield className="h-6 w-6 text-primary-600" />
-            <h1 className="text-2xl font-bold text-neutral-900">Privacy Policy</h1>
+            <h1 className="font-display text-3xl text-neutral-900">Privacy Policy</h1>
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
             <p><strong>Last Updated:</strong> {new Date().toLocaleDateString()}</p>
@@ -158,7 +158,7 @@ export default function Terms() {
         <div className="card p-8">
           <div className="flex items-center gap-3 mb-6">
             <Lock className="h-6 w-6 text-primary-600" />
-            <h1 className="text-2xl font-bold text-neutral-900">Canadian Consumer Protection & Auto-Renewal Terms</h1>
+            <h1 className="font-display text-3xl text-neutral-900">Canadian Consumer Protection & Auto-Renewal Terms</h1>
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
             <p><strong>For Canadian Users:</strong></p>
@@ -213,7 +213,7 @@ export default function Terms() {
         <div className="card p-8">
           <div className="flex items-center gap-3 mb-6">
             <Shield className="h-6 w-6 text-primary-600" />
-            <h1 className="text-2xl font-bold text-neutral-900">CASL (Canada's Anti-Spam Legislation) Compliance</h1>
+            <h1 className="font-display text-3xl text-neutral-900">CASL (Canada's Anti-Spam Legislation) Compliance</h1>
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
             <p><strong>For Canadian Users:</strong></p>
@@ -253,7 +253,7 @@ export default function Terms() {
         <div className="card p-8">
           <div className="flex items-center gap-3 mb-6">
             <Shield className="h-6 w-6 text-primary-600" />
-            <h1 className="text-2xl font-bold text-neutral-900">Quebec French Language Requirements</h1>
+            <h1 className="font-display text-3xl text-neutral-900">Quebec French Language Requirements</h1>
           </div>
           <div className="prose prose-sm max-w-none text-neutral-700 space-y-4">
             <p><strong>For Quebec Users:</strong></p>

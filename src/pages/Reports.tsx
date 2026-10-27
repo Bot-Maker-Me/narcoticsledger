@@ -8,6 +8,18 @@ import { exportToCSV, exportToPDF } from '@/lib/exportUtils';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell, BarChart, Bar } from 'recharts';
 import { motion } from 'framer-motion';
 import type { ReconciliationItemDraft } from '@/types/reconciliation';
+import SectionMarker from '@/components/SectionMarker';
+
+const chartTooltip = {
+  contentStyle: {
+    background: '#121A2B',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: 10,
+    fontSize: 12,
+  },
+  labelStyle: { color: '#F5F7FB' },
+  itemStyle: { color: '#B4BCCC' },
+};
 
 type ReportType = 'inventory' | 'dispensing' | 'reconciliation' | 'prescription' | 'schedule';
 
@@ -70,7 +82,7 @@ export default function Reports() {
       return acc;
     }, {} as Record<string, number>);
 
-    const colors = ['#14b8a6', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
+    const colors = ['#E85A5A', '#8E9FC4', '#D6A85F', '#7BA88B', '#6B7DA6'];
     
     return Object.entries(scheduleCounts).map(([name, value], index) => ({
       name,
@@ -139,7 +151,8 @@ export default function Reports() {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Reports & Analytics</h1>
+          <SectionMarker index="01" label="Reports" />
+          <h1 className="mt-4 font-display text-3xl text-neutral-900">Reports & Analytics</h1>
           <p className="mt-1 text-sm text-neutral-500">Generate and export compliance reports</p>
         </div>
         <div className="mt-4 flex items-center gap-2 sm:mt-0">
@@ -300,7 +313,7 @@ export default function Reports() {
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip />
+                    <Tooltip {...chartTooltip} />
                   </RechartsPieChart>
                 </ResponsiveContainer>
               </div>
@@ -331,20 +344,20 @@ export default function Reports() {
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={inventoryTrends}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255, 255, 255, 0.08)" />
                     <XAxis 
                       dataKey="name" 
-                      tick={{ fontSize: 10 }}
+                      tick={{ fill: '#98A2B8', fontSize: 10 }}
                       axisLine={false}
                       tickLine={false}
                     />
                     <YAxis 
-                      tick={{ fontSize: 10 }}
+                      tick={{ fill: '#98A2B8', fontSize: 10 }}
                       axisLine={false}
                       tickLine={false}
                     />
-                    <Tooltip />
-                    <Bar dataKey="stock" fill="#14b8a6" />
+                    <Tooltip {...chartTooltip} />
+                    <Bar dataKey="stock" fill="#E85A5A" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -400,7 +413,7 @@ function ReportButton({
       className={`flex flex-col items-center gap-2 rounded-lg border p-4 transition-all ${
         active 
           ? 'border-primary-200 bg-primary-50 text-primary-700' 
-          : 'border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50'
+          : 'border-neutral-200 bg-surface text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50'
       }`}
     >
       <Icon className="h-5 w-5" />

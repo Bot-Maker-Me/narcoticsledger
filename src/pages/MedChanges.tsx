@@ -16,7 +16,7 @@ export default function MedChanges() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-neutral-900">Med Changes</h1>
+      <h1 className="font-display text-3xl text-neutral-900">Med Changes</h1>
       <p className="mt-1 mb-6 text-sm text-neutral-500">
         Guided medication change tracking with a second-person verify step.
       </p>

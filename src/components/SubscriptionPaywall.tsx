@@ -59,14 +59,15 @@ export default function SubscriptionPaywall() {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-neutral-900/60 backdrop-blur-md animate-fade-in" />
+      <div className="absolute inset-0 bg-ink-950/85 backdrop-blur-md animate-fade-in" />
       <div className="relative w-full max-w-md animate-slide-up">
         <div className="card overflow-hidden">
-          <div className="bg-gradient-to-br from-primary-50 to-secondary-50 px-6 py-8 text-center">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 shadow-elevated">
+          <div className="relative overflow-hidden border-b border-white/5 px-6 py-8 text-center">
+            <div className="pointer-events-none absolute inset-x-0 -top-16 mx-auto h-32 w-2/3 rounded-full bg-primary-500/15 blur-3xl" />
+            <div className="relative mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 shadow-glow">
               <Lock className="h-8 w-8 text-white" />
             </div>
-            <h2 className="text-xl font-bold text-neutral-900">{title}</h2>
+            <h2 className="relative font-display text-2xl text-neutral-900">{title}</h2>
             <p className="mt-2 text-sm text-neutral-500">{message}</p>
             <p className="mt-2 text-xs text-neutral-400">Prices in Canadian dollars (CAD).</p>
           </div>
@@ -80,7 +81,7 @@ export default function SubscriptionPaywall() {
                     <span className="text-sm font-semibold text-neutral-800">Narcotics Ledger Pro</span>
                   </div>
                   <div className="text-right">
-                    <span className="text-2xl font-bold text-neutral-900">{price}</span>
+                    <span className="font-display text-3xl text-neutral-900">{price}</span>
                     <span className="text-sm text-neutral-400">/mo</span>
                   </div>
                 </div>

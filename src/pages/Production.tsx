@@ -17,7 +17,7 @@ export default function Production() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-neutral-900">Batch Production</h1>
+      <h1 className="font-display text-3xl text-neutral-900">Batch Production</h1>
       <p className="mt-1 mb-6 text-sm text-neutral-500">
         Digital batch tracking with two independent checks before a lot is completed.
       </p>

@@ -24,6 +24,7 @@ import {
   type ImportKind,
   type SaveResult,
 } from '@/hooks/useImportedRecords';
+import SectionMarker from '@/components/SectionMarker';
 
 const UPLOAD_TYPES = [
   { 
@@ -181,7 +182,8 @@ export default function UploadFile() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Upload File</h1>
+        <SectionMarker index="01" label="Upload" />
+        <h1 className="mt-4 font-display text-3xl text-neutral-900">Upload File</h1>
         <p className="mt-1 text-sm text-neutral-500">Upload purchase, dispensing, or destruction records</p>
       </div>
 
@@ -298,7 +300,7 @@ export default function UploadFile() {
 
       {/* File Preview Modal */}
       {showPreviewModal && filePreviews.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4">
           <div className="card max-w-2xl w-full max-h-[80vh] overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-neutral-900">File Processing Preview</h3>
@@ -497,7 +499,7 @@ function DropZone({
         <p className="mt-1 text-xs text-neutral-500">{description}</p>
         <button
           onClick={() => inputRef.current?.click()}
-          className="mt-4 rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+          className="mt-4 rounded-lg border border-neutral-200 bg-surface px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
         >
           Choose File
         </button>

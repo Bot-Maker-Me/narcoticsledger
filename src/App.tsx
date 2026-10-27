@@ -116,14 +116,14 @@ export default function App() {
             duration: 4000,
             style: {
               borderRadius: '10px',
-              background: '#fff',
-              color: '#262626',
-              boxShadow: '0 10px 25px -5px rgba(0,0,0,0.08), 0 8px 10px -6px rgba(0,0,0,0.05)',
-              border: '1px solid #f5f5f5',
+              background: '#121A2B',
+              color: '#E3E7EF',
+              boxShadow: '0 24px 60px -20px rgba(0, 0, 0, 0.75)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
               fontSize: '14px',
             },
-            success: { iconTheme: { primary: '#14b8a6', secondary: '#fff' } },
-            error: { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
+            success: { iconTheme: { primary: '#7BA88B', secondary: '#121A2B' } },
+            error: { iconTheme: { primary: '#E85A5A', secondary: '#121A2B' } },
           }}
         />
         <CookieConsent />

@@ -22,7 +22,7 @@ export default function CountLocationsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-neutral-900/40" onClick={onClose} />
+      <div className="absolute inset-0 bg-ink-950/80" onClick={onClose} />
       <div className="card relative z-10 w-full max-w-md p-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="flex items-center gap-2 font-semibold">

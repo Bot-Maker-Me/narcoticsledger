@@ -8,6 +8,7 @@ import { hasAccess, formatPrice } from '@/types/admin';
 import { useSystemSettings } from '@/hooks/useAdmin';
 import { useAllReconciliationItems } from '@/hooks/useReconciliation';
 import { motion } from 'framer-motion';
+import SectionMarker from '@/components/SectionMarker';
 
 export default function Dashboard() {
   const { data: prescriptions, isLoading: prescriptionsLoading } = usePrescriptions();
@@ -104,7 +105,8 @@ export default function Dashboard() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Dashboard</h1>
+        <SectionMarker index="01" label="Overview" />
+        <h1 className="mt-4 font-display text-3xl text-neutral-900">Dashboard</h1>
         <p className="mt-1 text-sm text-neutral-500">Overview of your pharmacy operations</p>
       </div>
 
@@ -202,7 +204,7 @@ export default function Dashboard() {
                 </div>
                 <TrendingUp className="h-4 w-4 text-neutral-300" />
               </div>
-              <p className="mt-4 text-2xl font-bold text-neutral-900">{stat.value}</p>
+              <p className="mt-4 font-display text-3xl text-neutral-900">{stat.value}</p>
               <p className="mt-0.5 text-sm text-neutral-500">{stat.label}</p>
               <p className={`mt-2 text-xs font-medium ${stat.changeText}`}>{stat.change}</p>
             </motion.div>
@@ -213,9 +215,12 @@ export default function Dashboard() {
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Recent Activity Feed */}
         <div className="card p-6 lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-neutral-900">Recent Activity</h2>
-            <button className="rounded-lg p-2 text-neutral-400 hover:bg-neutral-100" title="Filter">
+          <div className="flex items-center justify-between gap-4">
+            <SectionMarker index="02" label="Recent Activity" />
+            <button
+              className="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-white/5 hover:text-neutral-700"
+              title="Filter"
+            >
               <Filter className="h-4 w-4" />
             </button>
           </div>
@@ -262,7 +267,7 @@ export default function Dashboard() {
 
         {/* Quick Actions */}
         <div className="card p-6">
-          <h2 className="text-lg font-semibold text-neutral-900">Quick Actions</h2>
+          <SectionMarker index="03" label="Quick Actions" />
           <div className="mt-4 space-y-2">
             <QuickActionLink to="/reconciliation" label="Manual Reconciliation" icon={Scale} />
           </div>

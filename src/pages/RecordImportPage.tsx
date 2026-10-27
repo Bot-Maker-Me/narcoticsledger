@@ -24,6 +24,7 @@ import {
   type ImportKind,
   type SaveResult,
 } from '@/hooks/useImportedRecords';
+import SectionMarker from '@/components/SectionMarker';
 
 const KIND_META: Record<
   ImportKind,
@@ -251,7 +252,8 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">{meta.title}</h1>
+        <SectionMarker index="01" label={meta.title} />
+        <h1 className="mt-4 font-display text-3xl text-neutral-900">{meta.title}</h1>
         <p className="mt-1 text-sm text-neutral-500">{meta.subtitle}</p>
       </div>
 
@@ -350,7 +352,7 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
 
       {/* File Preview Modal */}
       {showPreviewModal && filePreviews.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/80 p-4">
           <div className="card max-w-2xl w-full max-h-[80vh] overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-neutral-900">File Processing Preview</h3>
@@ -591,7 +593,7 @@ function DropZone(props: DropZoneProps) {
           </div>
           <p className="mt-4 text-sm font-semibold text-neutral-700">{props.label}</p>
           <p className="mt-1 text-xs text-neutral-400">{props.description}</p>
-          <p className="mt-2 text-xs text-neutral-300">Drag & drop or click to browse (multiple files supported)</p>
+          <p className="mt-2 text-xs text-neutral-500">Drag & drop or click to browse (multiple files supported)</p>
         </>
       )}
     </div>

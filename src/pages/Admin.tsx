@@ -33,6 +33,7 @@ import type { AdminUser, SubscriptionStatus } from '@/types/admin';
 import { formatPrice } from '@/types/admin';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
+import SectionMarker from '@/components/SectionMarker';
 
 type Tab = 'users' | 'pricing' | 'health' | 'audit' | 'features';
 
@@ -67,15 +68,16 @@ export default function Admin() {
   return (
     <div>
       <div className="mb-6">
-        <div className="flex items-center gap-2">
+        <SectionMarker index="01" label="Administration" />
+        <div className="mt-4 flex items-center gap-2">
           <Shield className="h-6 w-6 text-primary-600" />
-          <h1 className="text-2xl font-bold text-neutral-900">Admin Dashboard</h1>
+          <h1 className="font-display text-3xl text-neutral-900">Admin Dashboard</h1>
         </div>
         <p className="mt-1 text-sm text-neutral-500">Manage users, pricing, and system health</p>
       </div>
 
       {/* Tabs */}
-      <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-neutral-100 bg-white p-1 shadow-card">
+      <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-neutral-100 bg-surface p-1 shadow-card">
         {tabs.map((t) => {
           const Icon = t.icon;
           return (
@@ -256,7 +258,7 @@ function UsersTab() {
       {actionTarget && actionType && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
-            className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm animate-fade-in"
+            className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm animate-fade-in"
             onClick={() => {
               setActionTarget(null);
               setActionType(null);
@@ -326,12 +328,12 @@ function UsersTab() {
                     activateMutation.isPending ||
                     revokeMutation.isPending
                   }
-                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium text-white transition-all active:scale-[0.98] disabled:opacity-50 ${
+                  className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all active:scale-[0.98] disabled:opacity-50 ${
                     actionType === 'extend'
-                      ? 'bg-warning-600 hover:bg-warning-700'
+                      ? 'bg-warning-600 text-ink-950 hover:bg-warning-700'
                       : actionType === 'activate'
-                        ? 'bg-success-600 hover:bg-success-700'
-                        : 'bg-error-600 hover:bg-error-700'
+                        ? 'bg-success-500 text-ink-950 hover:bg-success-600'
+                        : 'bg-error-500 text-white hover:bg-error-400'
                   }`}
                 >
                   {(extendTrialMutation.isPending ||
@@ -569,7 +571,7 @@ function AuditTab() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="flex-1">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
               <input
                 type="text"
                 placeholder="Filter by action..."
@@ -581,7 +583,7 @@ function AuditTab() {
           </div>
           <div className="flex-1">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
               <input
                 type="text"
                 placeholder="Filter by user..."
@@ -698,7 +700,7 @@ function FeaturesTab() {
                   features[item.key] ? 'bg-primary-600' : 'bg-neutral-200'
                 }`}
               >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-surface transition-transform ${
                   features[item.key] ? 'translate-x-6' : 'translate-x-1'
                 }`} />
               </button>

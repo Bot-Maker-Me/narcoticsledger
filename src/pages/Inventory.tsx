@@ -18,6 +18,7 @@ import type { TransactionType } from '@/types/transaction';
 import DrugModal from '@/components/DrugModal';
 import TransactionModal from '@/components/TransactionModal';
 import Tooltip from '@/components/Tooltip';
+import SectionMarker from '@/components/SectionMarker';
 
 const scheduleStyles: Record<DrugSchedule, string> = {
   Narcotic: 'bg-error-50 text-error-700',
@@ -129,7 +130,8 @@ export default function Inventory() {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Drug Inventory</h1>
+          <SectionMarker index="01" label="Inventory" />
+          <h1 className="mt-4 font-display text-3xl text-neutral-900">Drug Inventory</h1>
           <p className="mt-1 text-sm text-neutral-500">Manage your drug catalog and stock levels</p>
         </div>
         <button className="btn-primary mt-4 sm:mt-0" onClick={handleAdd}>
@@ -142,7 +144,7 @@ export default function Inventory() {
         {/* Toolbar */}
         <div className="flex flex-col gap-3 border-b border-neutral-100 p-4 sm:flex-row sm:items-center">
           <div className="relative flex-1 sm:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
             <input
               type="text"
               value={search}
@@ -166,7 +168,7 @@ export default function Inventory() {
             {filterOpen && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setFilterOpen(false)} />
-                <div className="absolute right-0 top-full z-40 mt-2 w-44 animate-slide-up rounded-lg border border-neutral-100 bg-white shadow-elevated">
+                <div className="absolute right-0 top-full z-40 mt-2 w-44 animate-slide-up rounded-lg border border-white/10 bg-surface shadow-elevated">
                   {(['All', ...SCHEDULES] as const).map((option) => (
                     <button
                       key={option}
@@ -388,7 +390,7 @@ export default function Inventory() {
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
-            className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm animate-fade-in"
+            className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm animate-fade-in"
             onClick={() => setDeleteTarget(null)}
           />
           <div className="relative w-full max-w-sm animate-slide-up">
@@ -409,7 +411,7 @@ export default function Inventory() {
                 <button
                   onClick={handleDelete}
                   disabled={deleteMutation.isPending}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-error-600 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-error-700 active:scale-[0.98] disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-error-500 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-error-400 active:scale-[0.98] disabled:opacity-50"
                 >
                   {deleteMutation.isPending ? (
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />

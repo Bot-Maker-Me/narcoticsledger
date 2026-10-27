@@ -14,6 +14,7 @@ import {
 import { useTransactions, useFilteredTransactions } from '@/hooks/useTransactions';
 import { formatLedgerDate } from '@/lib/ledgerDate';
 import type { TransactionType } from '@/types/transaction';
+import SectionMarker from '@/components/SectionMarker';
 
 const PAGE_SIZE = 10;
 
@@ -79,7 +80,8 @@ export default function TransactionHistory() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Transaction History</h1>
+        <SectionMarker index="01" label="Transactions" />
+        <h1 className="mt-4 font-display text-3xl text-neutral-900">Transaction History</h1>
         <p className="mt-1 text-sm text-neutral-500">
           All inventory transactions ({totalCount} total)
         </p>
@@ -275,7 +277,7 @@ export default function TransactionHistory() {
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-sm text-neutral-500">
-                            {tx.notes || <span className="text-neutral-300">—</span>}
+                            {tx.notes || <span className="text-neutral-500">—</span>}
                           </span>
                         </td>
                         <td className="px-4 py-3">

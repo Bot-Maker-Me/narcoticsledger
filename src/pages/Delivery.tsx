@@ -71,7 +71,7 @@ export default function Delivery() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Prescription Delivery</h1>
+        <h1 className="font-display text-3xl text-neutral-900">Prescription Delivery</h1>
         <p className="mt-1 text-sm text-neutral-500">
           Create a run, add stops, optimize the route, collect payment at the door, and keep a paperless audit trail.
         </p>
@@ -154,7 +154,7 @@ export default function Delivery() {
               type="button"
               onClick={() => setSelectedRunId(run.id)}
               className={`w-full rounded-xl border p-4 text-left transition ${
-                selectedRunId === run.id ? 'border-primary-300 bg-primary-50' : 'border-neutral-100 bg-white hover:border-neutral-200'
+                selectedRunId === run.id ? 'border-primary-300 bg-primary-50' : 'border-neutral-100 bg-surface hover:border-neutral-200'
               }`}
             >
               <div className="flex items-start justify-between gap-2">

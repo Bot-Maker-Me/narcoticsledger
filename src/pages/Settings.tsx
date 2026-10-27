@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { User, Mail, Bell, Shield, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
+import SectionMarker from '@/components/SectionMarker';
 
 export default function Settings() {
   const { user, signOut } = useAuth();
@@ -27,7 +28,8 @@ export default function Settings() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Settings</h1>
+        <SectionMarker index="01" label="Settings" />
+        <h1 className="mt-4 font-display text-3xl text-neutral-900">Settings</h1>
         <p className="mt-1 text-sm text-neutral-500">Manage your account and preferences</p>
       </div>
 
@@ -47,7 +49,7 @@ export default function Settings() {
                   type="email"
                   value={user?.email ?? ''}
                   disabled
-                  className="input-field cursor-not-allowed pl-10 bg-neutral-50"
+                  className="input-field cursor-not-allowed border-white/10 bg-white/5 pl-10 text-neutral-500"
                 />
               </div>
             </div>
@@ -85,7 +87,7 @@ export default function Settings() {
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-surface shadow-sm transition-transform duration-200 ${
                       toggle.value ? 'translate-x-5' : 'translate-x-0.5'
                     }`}
                   />

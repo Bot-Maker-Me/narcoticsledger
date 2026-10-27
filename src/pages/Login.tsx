@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import toast from 'react-hot-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import SectionMarker from '@/components/SectionMarker';
 
 export default function Login() {
   const { signIn } = useAuth();
@@ -43,69 +44,95 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50 px-4">
-      <div className="w-full max-w-md animate-slide-up">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-600 shadow-elevated">
-            <Pill className="h-7 w-7 text-white" />
+    <div className="relative flex min-h-screen flex-col px-4">
+      {/* Status pill */}
+      <div className="flex justify-end pt-6">
+        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 backdrop-blur-sm">
+          <span className="h-1.5 w-1.5 rounded-full bg-success-500" />
+          <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-neutral-500">
+            All systems operational
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-1 items-center justify-center py-12">
+        <div className="w-full max-w-md animate-slide-up">
+          <div className="text-center">
+            <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-600 shadow-glow">
+              <Pill className="h-7 w-7 text-white" />
+            </div>
+            <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-primary-500">
+              Narcotics Ledger
+            </p>
+            <SectionMarker index="01" label="Sign In" className="mt-5 justify-center" />
+            <h1 className="mt-5 font-display text-4xl text-neutral-900">Welcome back</h1>
+            <p className="mt-2 text-sm text-neutral-500">
+              Sign in to your Narcotics Ledger account
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-neutral-900">Welcome back</h1>
-          <p className="mt-1 text-sm text-neutral-500">Sign in to your Narcotics Ledger account</p>
-        </div>
 
-        <div className="card p-8">
-          <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-            <div>
-              <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-neutral-700">
-                Email address
-              </label>
-              <div className="relative">
-                <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@pharmacy.com"
-                  className="input-field pl-10"
-                  autoComplete="email"
-                />
+          <div className="card mt-8 p-8">
+            <SectionMarker index="02" label="Credentials" />
+
+            <form onSubmit={handleSubmit} className="mt-6 space-y-5" noValidate>
+              <div>
+                <label htmlFor="email" className="field-label">
+                  Email address
+                </label>
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@pharmacy.com"
+                    className="input-field pl-10"
+                    autoComplete="email"
+                  />
+                </div>
+                {errors.email && <p className="mt-1 text-xs text-error-600">{errors.email}</p>}
               </div>
-              {errors.email && <p className="mt-1 text-xs text-error-600">{errors.email}</p>}
-            </div>
 
-            <div>
-              <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-neutral-700">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="input-field pl-10"
-                  autoComplete="current-password"
-                />
+              <div>
+                <label htmlFor="password" className="field-label">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
+                  <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="input-field pl-10"
+                    autoComplete="current-password"
+                  />
+                </div>
+                {errors.password && <p className="mt-1 text-xs text-error-600">{errors.password}</p>}
               </div>
-              {errors.password && <p className="mt-1 text-xs text-error-600">{errors.password}</p>}
-            </div>
 
-            <button type="submit" disabled={submitting} className="btn-primary w-full">
-              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {submitting ? 'Signing in...' : 'Sign in'}
-            </button>
-          </form>
+              <button type="submit" disabled={submitting} className="btn-primary w-full">
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {submitting ? 'Signing in...' : 'Sign in'}
+              </button>
+            </form>
 
-          <p className="mt-6 text-center text-sm text-neutral-500">
-            Don't have an account?{' '}
-            <Link to="/signup" className="font-medium text-primary-600 hover:text-primary-700">
-              Sign up
-            </Link>
-          </p>
+            <p className="mt-6 text-center text-sm text-neutral-500">
+              Don't have an account?{' '}
+              <Link to="/signup" className="font-medium text-primary-500 hover:text-primary-700">
+                Sign up
+              </Link>
+            </p>
+          </div>
         </div>
+      </div>
+
+      <div className="pb-8 text-center">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-400">
+          © 2026 · Encrypted · Role-based access · Every action logged
+        </p>
       </div>
     </div>
   );

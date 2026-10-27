@@ -17,7 +17,7 @@ export default function Incidents() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-neutral-900">Incident Reporting</h1>
+      <h1 className="font-display text-3xl text-neutral-900">Incident Reporting</h1>
       <p className="mt-1 mb-6 text-sm text-neutral-500">
         Log operational errors, spot trends, and close the loop. {openCount} open.
       </p>

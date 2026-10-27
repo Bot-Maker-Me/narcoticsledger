@@ -17,7 +17,7 @@ export default function Policies() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-neutral-900">Policies & Procedures</h1>
+      <h1 className="font-display text-3xl text-neutral-900">Policies & Procedures</h1>
       <p className="mt-1 mb-6 text-sm text-neutral-500">Create, share, and record staff acknowledgements.</p>
       {isError && <p className="mb-4 text-sm text-warning-700">Run the latest database migration to enable this module.</p>}
 

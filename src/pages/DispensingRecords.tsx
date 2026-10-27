@@ -5,6 +5,7 @@ import { isSameDin } from '@/lib/dinReference';
 import { formatLedgerDate, parseLedgerDate } from '@/lib/ledgerDate';
 import DinMonthlyTotal from '@/components/DinMonthlyTotal';
 import toast from 'react-hot-toast';
+import SectionMarker from '@/components/SectionMarker';
 
 const DISPENSE_FILTER_OPTIONS = [
   { value: 'rx', label: 'RX' },
@@ -107,7 +108,8 @@ export default function DispensingRecords() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-neutral-900">Dispensing Records</h1>
+        <SectionMarker index="01" label="Dispensing Records" />
+        <h1 className="mt-4 font-display text-3xl text-neutral-900">Dispensing Records</h1>
         <p className="mt-1 text-sm text-neutral-500">View all uploaded dispensing records (raw data from files)</p>
       </div>
 
@@ -119,7 +121,7 @@ export default function DispensingRecords() {
           <div className="relative">
             <button
               onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-              className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+              className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-surface px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
             >
               <Filter className="h-4 w-4" />
               Filter
@@ -127,7 +129,7 @@ export default function DispensingRecords() {
             </button>
 
             {showFilterDropdown && (
-              <div className="absolute top-full left-0 mt-2 w-48 rounded-lg border border-neutral-200 bg-white shadow-elevated z-10">
+              <div className="absolute top-full left-0 mt-2 w-48 rounded-lg border border-neutral-200 bg-surface shadow-elevated z-10">
                 {DISPENSE_FILTER_OPTIONS.map((option) => (
                   <button
                     key={option.value}
@@ -154,7 +156,7 @@ export default function DispensingRecords() {
           {activeFilters.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               {activeFilters.map((filterValue) => (
-                <div key={filterValue} className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2">
+                <div key={filterValue} className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-surface px-3 py-2">
                   <span className="text-xs font-medium text-neutral-600">
                     {DISPENSE_FILTER_OPTIONS.find(o => o.value === filterValue)?.label}
                   </span>

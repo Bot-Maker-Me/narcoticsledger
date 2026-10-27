@@ -47,6 +47,7 @@ import type {
 import { EMPTY_CHECKLIST, DEFAULT_COUNT_LOCATIONS } from '@/types/reconciliation';
 import { motion, AnimatePresence } from 'framer-motion';
 import CountLocationsModal from '@/components/CountLocationsModal';
+import SectionMarker from '@/components/SectionMarker';
 
 type View = 'landing' | 'table' | 'past' | 'detail';
 
@@ -1159,7 +1160,8 @@ function LandingView(props: LandingViewProps) {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Reconciliation</h1>
+          <SectionMarker index="01" label="Reconciliation" />
+          <h1 className="mt-4 font-display text-3xl text-neutral-900">Reconciliation</h1>
           <p className="mt-1 text-sm text-neutral-500">
             Import pharmacy exports to start a reconciliation cycle
           </p>
@@ -1410,7 +1412,7 @@ function DropZone(props: DropZoneProps) {
           </div>
           <p className="mt-4 text-sm font-semibold text-neutral-700">{props.label}</p>
           <p className="mt-1 text-xs text-neutral-400">{props.description}</p>
-          <p className="mt-2 text-xs text-neutral-300">Drag & drop or click to browse</p>
+          <p className="mt-2 text-xs text-neutral-500">Drag & drop or click to browse</p>
         </>
       )}
     </div>
@@ -1478,7 +1480,7 @@ function MultiFileDropZone({
           </div>
           <p className="mt-4 text-sm font-semibold text-neutral-700">{label}</p>
           <p className="mt-1 text-xs text-neutral-400">{description}</p>
-          <p className="mt-2 text-xs text-neutral-300">Drag & drop or click to browse (multiple files allowed)</p>
+          <p className="mt-2 text-xs text-neutral-500">Drag & drop or click to browse (multiple files allowed)</p>
         </div>
         
         {files.length > 0 && (
@@ -1602,7 +1604,7 @@ function TableView(props: TableViewProps) {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Reconciliation Table</h1>
+          <h1 className="font-display text-3xl text-neutral-900">Reconciliation Table</h1>
           <p className="mt-1 text-sm text-neutral-500">
             {props.items.length} items · {progress}% counted
           </p>
@@ -1642,7 +1644,7 @@ function TableView(props: TableViewProps) {
       {/* Search and Filter Controls */}
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative flex-1 max-w-md">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-900/[0.4]" />
           <input
             type="text"
             placeholder="Search by DIN or description..."
@@ -1655,8 +1657,8 @@ function TableView(props: TableViewProps) {
             className="btn-secondary"
             onClick={props.onToggleBulkEdit}
             style={{
-              backgroundColor: props.bulkEditMode ? '#f0fdfa' : undefined,
-              borderColor: props.bulkEditMode ? '#14b8a6' : undefined,
+              backgroundColor: props.bulkEditMode ? 'rgba(232, 90, 90, 0.14)' : undefined,
+              borderColor: props.bulkEditMode ? '#E85A5A' : undefined,
             }}
           >
             <Edit3 className="h-4 w-4" />
@@ -1884,7 +1886,7 @@ function TableView(props: TableViewProps) {
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       {variance === null ? (
-                        <span className="text-sm text-neutral-300">—</span>
+                        <span className="text-sm text-neutral-500">—</span>
                       ) : (
                         <span className={`text-sm font-semibold ${variance === 0 ? 'text-success-600' : variance < 0 ? 'text-error-600' : 'text-warning-600'}`}>
                           {variance > 0 ? '+' : ''}{variance}
@@ -1992,7 +1994,7 @@ function TableView(props: TableViewProps) {
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
           >
             <div
-              className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm"
+              className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm"
               onClick={props.onCloseVerifyModal}
             />
             <motion.div
@@ -2059,7 +2061,7 @@ function DetailView(props: DetailViewProps) {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Reconciliation Detail</h1>
+          <h1 className="font-display text-3xl text-neutral-900">Reconciliation Detail</h1>
           <p className="mt-1 text-sm text-neutral-500">
             {props.items.length} items · Enter actual counts, then complete the cycle
           </p>
@@ -2141,7 +2143,7 @@ function DetailView(props: DetailViewProps) {
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       {variance === null ? (
-                        <span className="text-sm text-neutral-300">—</span>
+                        <span className="text-sm text-neutral-500">—</span>
                       ) : (
                         <span className={`text-sm font-semibold ${variance === 0 ? 'text-success-600' : variance < 0 ? 'text-error-600' : 'text-warning-600'}`}>
                           {variance > 0 ? '+' : ''}{variance}
@@ -2192,7 +2194,7 @@ function PastCyclesView(props: PastCyclesViewProps) {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">Reconciliation Cycles</h1>
+          <h1 className="font-display text-3xl text-neutral-900">Reconciliation Cycles</h1>
           <p className="mt-1 text-sm text-neutral-500">View and manage reconciliation history</p>
         </div>
         <button className="btn-primary mt-4 sm:mt-0" onClick={props.onNewCycle}>
@@ -2349,7 +2351,7 @@ function DeleteDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm animate-fade-in"
         onClick={onCancel}
       />
       <div className="relative w-full max-w-sm animate-slide-up">
@@ -2368,7 +2370,7 @@ function DeleteDialog({
             <button
               onClick={onConfirm}
               disabled={deleting}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-error-600 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-error-700 active:scale-[0.98] disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-error-500 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-error-400 active:scale-[0.98] disabled:opacity-50"
             >
               {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
               Delete
@@ -2409,7 +2411,7 @@ function FilePreviewModal({ previews, itemCount, onConfirm, onCancel }: FilePrev
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-ink-950/80 backdrop-blur-sm animate-fade-in"
         onClick={onCancel}
       />
       <div className="relative w-full max-w-4xl animate-slide-up z-[10000] max-h-[90vh] overflow-y-auto">

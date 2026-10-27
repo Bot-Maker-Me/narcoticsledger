@@ -16,7 +16,7 @@ export default function PunchClock() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-neutral-900">Punch Clock</h1>
+      <h1 className="font-display text-3xl text-neutral-900">Punch Clock</h1>
       <p className="mt-1 mb-6 text-sm text-neutral-500">Track staff time for the pharmacy floor.</p>
       {isError && <p className="mb-4 text-sm text-warning-700">Run the latest database migration to enable this module.</p>}
 
