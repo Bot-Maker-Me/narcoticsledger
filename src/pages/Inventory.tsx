@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   Package,
   Search,
@@ -12,11 +12,12 @@ import {
   TrendingDown,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useDrugs, useDeleteDrug } from '@/hooks/useDrugs';
+import { useDrugs, useDeleteDrug, useUpdatePackSize } from '@/hooks/useDrugs';
 import { SCHEDULES, type DrugWithStock, type DrugSchedule } from '@/types/drug';
 import type { TransactionType } from '@/types/transaction';
 import DrugModal from '@/components/DrugModal';
 import TransactionModal from '@/components/TransactionModal';
+import Tooltip from '@/components/Tooltip';
 
 const scheduleStyles: Record<DrugSchedule, string> = {
   Narcotic: 'bg-error-50 text-error-700',
@@ -46,6 +47,7 @@ function SkeletonRow() {
       </td>
       <td className="px-4 py-3.5"><div className="h-5 w-16 animate-pulse rounded-full bg-neutral-100" /></td>
       <td className="px-4 py-3.5"><div className="h-4 w-12 animate-pulse rounded bg-neutral-100" /></td>
+      <td className="px-4 py-3.5"><div className="h-4 w-10 animate-pulse rounded bg-neutral-100" /></td>
       <td className="px-4 py-3.5"><div className="h-4 w-16 animate-pulse rounded bg-neutral-100" /></td>
       <td className="px-4 py-3.5"><div className="h-4 w-24 animate-pulse rounded bg-neutral-100" /></td>
     </tr>
@@ -55,6 +57,7 @@ function SkeletonRow() {
 export default function Inventory() {
   const { data: drugs, isLoading, isError, refetch } = useDrugs();
   const deleteMutation = useDeleteDrug();
+  const packSizeMutation = useUpdatePackSize();
 
   const [search, setSearch] = useState('');
   const [scheduleFilter, setScheduleFilter] = useState<DrugSchedule | 'All'>('All');
@@ -62,6 +65,8 @@ export default function Inventory() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingDrug, setEditingDrug] = useState<DrugWithStock | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DrugWithStock | null>(null);
+  const [packEdit, setPackEdit] = useState<{ id: string; value: string } | null>(null);
+  const skipPackCommit = useRef(false);
   const [transactionModal, setTransactionModal] = useState<{
     drug: DrugWithStock;
     type: TransactionType;
@@ -85,6 +90,27 @@ export default function Inventory() {
   const handleAdd = () => {
     setEditingDrug(null);
     setModalOpen(true);
+  };
+
+  // Pack size decides how quantities from files and manual entries become total units.
+  const commitPackSize = async (drug: DrugWithStock) => {
+    if (skipPackCommit.current) {
+      skipPackCommit.current = false;
+      return;
+    }
+    if (!packEdit || packEdit.id !== drug.id) return;
+
+    const packSize = parseInt(packEdit.value);
+    setPackEdit(null);
+    if (!Number.isFinite(packSize) || packSize < 1 || packSize === drug.pack_size) return;
+
+    try {
+      await packSizeMutation.mutateAsync({ id: drug.id, packSize });
+      toast.success(`${drug.description}: pack size ${packSize}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update pack size';
+      toast.error(message);
+    }
   };
 
   const handleDelete = async () => {
@@ -194,6 +220,11 @@ export default function Inventory() {
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Description</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Schedule</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Current Stock</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    <Tooltip content="Quantity × pack size = total units recorded from imported files and manual entries. Use 1 to record quantities as entered.">
+                      <span>Pack Size</span>
+                    </Tooltip>
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Reorder Level</th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Actions</th>
                 </tr>
@@ -236,6 +267,45 @@ export default function Inventory() {
                               {stockStatus.label}
                             </span>
                           </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {packEdit?.id === drug.id ? (
+                            <input
+                              type="number"
+                              min={1}
+                              autoFocus
+                              value={packEdit.value}
+                              onChange={(e) => setPackEdit({ id: drug.id, value: e.target.value })}
+                              onBlur={() => commitPackSize(drug)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') e.currentTarget.blur();
+                                if (e.key === 'Escape') {
+                                  skipPackCommit.current = true;
+                                  setPackEdit(null);
+                                }
+                              }}
+                              className="w-20 rounded border border-primary-400 px-2 py-1 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                            />
+                          ) : (
+                            <Tooltip
+                              content={
+                                drug.pack_size > 1
+                                  ? `Imported and manual quantities are multiplied by ${drug.pack_size} to record total units`
+                                  : 'Quantities are recorded exactly as entered — click to set a pack size'
+                              }
+                            >
+                              <button
+                                onClick={() => setPackEdit({ id: drug.id, value: String(drug.pack_size) })}
+                                className={`rounded px-2 py-1 text-sm transition-colors hover:bg-primary-50 hover:text-primary-600 ${
+                                  drug.pack_size > 1
+                                    ? 'font-semibold text-primary-700'
+                                    : 'text-neutral-600'
+                                }`}
+                              >
+                                {drug.pack_size > 1 ? `×${drug.pack_size}` : drug.pack_size}
+                              </button>
+                            </Tooltip>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm text-neutral-600">{drug.reorder_level}</td>
                         <td className="px-4 py-3">

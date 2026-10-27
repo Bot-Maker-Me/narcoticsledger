@@ -23,7 +23,7 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
     din: '',
     description: '',
     schedule: 'Verify',
-    pack_size: 100,
+    pack_size: 1,
     reorder_level: 50,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -43,7 +43,7 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
         din: '',
         description: '',
         schedule: 'Verify',
-        pack_size: 100,
+        pack_size: 1,
         reorder_level: 50,
       });
     }
@@ -241,7 +241,14 @@ export default function DrugModal({ open, onClose, editingDrug }: DrugModalProps
                   className="input-field"
                   disabled={isSubmitting}
                 />
-                {errors.pack_size && <p className="mt-1 text-xs text-error-600">{errors.pack_size}</p>}
+                {errors.pack_size ? (
+                  <p className="mt-1 text-xs text-error-600">{errors.pack_size}</p>
+                ) : (
+                  <p className="mt-1 text-xs text-neutral-400">
+                    Imported and manual quantities are multiplied by this to record total units. Use 1
+                    to record quantities as entered.
+                  </p>
+                )}
               </div>
 
               <div>

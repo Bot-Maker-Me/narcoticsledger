@@ -979,6 +979,8 @@ export default function Reconciliation() {
           cyclesLoading={cyclesLoading}
           startFromPreviousMode={startFromPreviousMode}
           dinReference={dinReference}
+          drugCount={drugs?.length ?? 0}
+          packedDrugCount={(drugs ?? []).filter((drug) => drug.pack_size > 1).length}
           savedCountFile={savedCountFile}
           savedCountDragOver={savedCountDragOver}
           hasExistingData={existingMckessonData.size > 0 || existingKrollData.size > 0}
@@ -1159,6 +1161,8 @@ interface LandingViewProps {
   cyclesLoading: boolean;
   startFromPreviousMode: 'database' | 'file' | 'zero';
   dinReference: { dinCount: number; packSizeCount: number } | null;
+  drugCount: number;
+  packedDrugCount: number;
   savedCountFile: File | null;
   savedCountDragOver: boolean;
   hasExistingData: boolean;
@@ -1255,6 +1259,13 @@ function LandingView(props: LandingViewProps) {
                     ? "Every DIN from uploaded files and manual entries is matched to this reference for the product name and CDSA schedule (unmatched DINs are retried with a leading zero). Quantities are multiplied by each drug's Pack Size to record total units."
                     : "Quantities are multiplied by each drug's Pack Size to record total units."}
             </p>
+            {props.drugCount > 0 && (
+              <p className="mt-1 text-xs text-neutral-400">
+                {props.packedDrugCount > 0
+                  ? `${props.packedDrugCount} of ${props.drugCount} drugs multiply the entered quantity by their pack size.`
+                  : `None of your ${props.drugCount} drugs has a Pack Size above 1 yet, so quantities are recorded as entered. Set Pack Size in Inventory to convert packs into units.`}
+              </p>
+            )}
           </div>
         </div>
       </div>

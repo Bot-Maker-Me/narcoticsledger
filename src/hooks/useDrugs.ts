@@ -59,6 +59,11 @@ async function updateDrug({ id, formData }: { id: string; formData: DrugFormData
   return data;
 }
 
+async function updatePackSize({ id, packSize }: { id: string; packSize: number }): Promise<void> {
+  const { error } = await supabase.from('drugs').update({ pack_size: packSize }).eq('id', id);
+  if (error) throw error;
+}
+
 async function deleteDrug(id: string): Promise<void> {
   const { error } = await supabase.from('drugs').delete().eq('id', id);
   if (error) throw error;
@@ -93,6 +98,16 @@ export function useUpdateDrug() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: updateDrug,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['drugs'] });
+    },
+  });
+}
+
+export function useUpdatePackSize() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updatePackSize,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['drugs'] });
     },
