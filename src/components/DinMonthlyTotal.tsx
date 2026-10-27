@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Hash, X } from 'lucide-react';
 import { isSameDin } from '@/lib/dinReference';
+import { ledgerMonthKey } from '@/lib/ledgerDate';
 import type { ImportedRecordRow } from '@/hooks/useImportedRecords';
 
 interface DinMonthlyTotalProps {
@@ -8,12 +9,6 @@ interface DinMonthlyTotalProps {
   loading?: boolean;
   /** Verb used in the summary, e.g. "Purchased" or "Dispensed". */
   label: string;
-}
-
-function monthKey(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function shiftMonth(key: string, delta: number): string {
@@ -35,7 +30,7 @@ function monthLabel(key: string): string {
  */
 export default function DinMonthlyTotal({ records, loading, label }: DinMonthlyTotalProps) {
   const [din, setDin] = useState('');
-  const [month, setMonth] = useState(() => monthKey(new Date().toISOString()));
+  const [month, setMonth] = useState(() => ledgerMonthKey(new Date().toISOString()));
 
   const digits = din.replace(/\D/g, '');
   const ready = digits.length >= 6;
@@ -43,7 +38,7 @@ export default function DinMonthlyTotal({ records, loading, label }: DinMonthlyT
   const matches = useMemo(() => {
     if (!records || !ready) return [];
     return records.filter(
-      (record) => isSameDin(record.din, din) && monthKey(record.created_at) === month
+      (record) => isSameDin(record.din, din) && ledgerMonthKey(record.created_at) === month
     );
   }, [records, din, month, ready]);
 

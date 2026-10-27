@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
+import { toLedgerDateString } from '@/lib/ledgerDate';
 import type { ParsedDinData } from '@/types/reconciliation';
 import type { TransactionType } from '@/types/transaction';
 
@@ -103,26 +104,38 @@ async function ensureDrugId(din: string, description?: string): Promise<string> 
   return created.id;
 }
 
+/** The API returns at most this many rows per request, so the ledger is paged through. */
+const FETCH_PAGE_SIZE = 1000;
+
 async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow[]> {
   const config = KIND_CONFIG[kind];
-  
-  // Filter by transaction_type instead of source for reliability
-  let query = supabase
-    .from('inventory_transactions')
-    .select('id, transaction_type, quantity, created_at, date, file_name, drugs!inner(din, description)')
-    .eq('transaction_type', config.type)
-    .order('created_at', { ascending: false });
 
-  const { data, error } = await query;
+  // Filter by transaction_type instead of source for reliability.
+  // A single request only returns the first page, which silently dropped older
+  // records and made the monthly totals short, so keep paging to the end.
+  const rows: any[] = [];
 
-  if (error) {
-    console.error('Error fetching imported records:', error);
-    throw error;
+  for (let from = 0; ; from += FETCH_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('inventory_transactions')
+      .select('id, transaction_type, quantity, created_at, date, file_name, drugs!inner(din, description)')
+      .eq('transaction_type', config.type)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, from + FETCH_PAGE_SIZE - 1);
+
+    if (error) {
+      console.error('Error fetching imported records:', error);
+      throw error;
+    }
+
+    rows.push(...(data ?? []));
+    if (!data || data.length < FETCH_PAGE_SIZE) break;
   }
 
-  console.log(`Fetched ${data?.length || 0} records for kind ${kind}`);
+  console.log(`Fetched ${rows.length} records for kind ${kind}`);
 
-  return (data ?? []).map((row) => {
+  return rows.map((row) => {
     const drug = row.drugs as unknown as { din: string; description: string };
     return {
       id: row.id,
@@ -199,8 +212,9 @@ async function saveImportedRecords({
     const drugId = drugIdMap.get(record.din);
     const signedQty = config.type === 'PURCHASE' ? qty : -qty;
 
-    // Use the date from the transaction data if available, otherwise use current date
-    let transactionDate = new Date().toISOString();
+    // Use the date from the transaction data if available, otherwise use today.
+    // Stored as a plain calendar day so the purchase date never drifts by timezone.
+    let transactionDate = toLedgerDateString(new Date());
     if (record.transactions && record.transactions.length > 0) {
       const validTransactions = record.transactions.filter(t => t.date !== null);
       if (validTransactions.length > 0) {
@@ -208,7 +222,7 @@ async function saveImportedRecords({
           if (!a.date || !b.date) return 0;
           return new Date(b.date).getTime() - new Date(a.date).getTime();
         });
-        transactionDate = new Date(validTransactions[0].date!).toISOString();
+        transactionDate = toLedgerDateString(new Date(validTransactions[0].date!));
       }
     }
 
@@ -315,7 +329,7 @@ async function saveImportedIndividualRows({
   const transactions = validRows.map(row => {
     const drugId = drugIdMap.get(row.din);
     const signedQty = config.type === 'PURCHASE' ? row.quantity : -row.quantity;
-    const transactionDate = row.date ? row.date.toISOString() : new Date().toISOString();
+    const transactionDate = toLedgerDateString(row.date ?? new Date());
 
     return {
       drug_id: drugId,

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Loader2, FileText, Trash2, Filter, X, ChevronDown } from 'lucide-react';
 import { useImportedRecords, useDeleteImportedFile, type ImportedRecordRow } from '@/hooks/useImportedRecords';
 import { isSameDin } from '@/lib/dinReference';
+import { formatLedgerDate, parseLedgerDate } from '@/lib/ledgerDate';
 import DinMonthlyTotal from '@/components/DinMonthlyTotal';
 import toast from 'react-hot-toast';
 
@@ -74,8 +75,9 @@ export default function DispensingRecords() {
     if (!records) return records;
     
     return records.filter(record => {
-      if (filters.fillDate && !new Date(record.created_at).toLocaleDateString().toLowerCase().includes(filters.fillDate.toLowerCase())) {
-        return false;
+      if (filters.fillDate) {
+        const recordDate = parseLedgerDate(record.created_at)?.toLocaleDateString().toLowerCase() ?? '';
+        if (!recordDate.includes(filters.fillDate.toLowerCase())) return false;
       }
       if (filters.din && !isSameDin(record.din, filters.din) && !record.din.toLowerCase().includes(filters.din.toLowerCase())) {
         return false;
@@ -205,7 +207,7 @@ export default function DispensingRecords() {
             {(() => {
               const groupedRecords = new Map<string, ImportedRecordRow[]>();
               (filteredRecords ?? []).forEach(record => {
-                const fileName = record.file_name || `Imported ${new Date(record.created_at).toLocaleDateString()}`;
+                const fileName = record.file_name || `Imported ${formatLedgerDate(record.created_at)}`;
                 if (!groupedRecords.has(fileName)) {
                   groupedRecords.set(fileName, []);
                 }
@@ -249,7 +251,7 @@ export default function DispensingRecords() {
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">DIN</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Description</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Dispensed</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Uploaded</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Date</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -259,7 +261,7 @@ export default function DispensingRecords() {
                             <td className="px-4 py-3 text-sm text-neutral-600">{record.description}</td>
                             <td className="px-4 py-3 text-right text-sm text-neutral-600">{record.quantity}</td>
                             <td className="px-4 py-3 text-right text-xs text-neutral-400">
-                              {new Date(record.created_at).toLocaleString()}
+                              {formatLedgerDate(record.created_at)}
                             </td>
                           </tr>
                         ))}

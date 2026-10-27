@@ -14,6 +14,7 @@ import {
 import toast from 'react-hot-toast';
 import { parseSingleFileWithIndividualRows, type FilePreview } from '@/lib/fileParser';
 import { createPackSizeResolver } from '@/lib/dinReference';
+import { formatLedgerDate } from '@/lib/ledgerDate';
 import { useDrugs } from '@/hooks/useDrugs';
 import type { ParsedDinData } from '@/types/reconciliation';
 import {
@@ -374,7 +375,7 @@ export default function UploadFile() {
               {(() => {
                 const groupedRecords = new Map<string, typeof savedRecords>();
                 savedRecords.forEach(record => {
-                  const fileName = record.file_name || `Imported ${new Date(record.created_at).toLocaleDateString()}`;
+                  const fileName = record.file_name || `Imported ${formatLedgerDate(record.created_at)}`;
                   if (!groupedRecords.has(fileName)) {
                     groupedRecords.set(fileName, []);
                   }
@@ -415,7 +416,7 @@ export default function UploadFile() {
                             <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">
                               {selectedType === 'purchase' ? 'Purchased' : selectedType === 'dispense' ? 'Dispensed' : 'Destroyed'}
                             </th>
-                            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Uploaded</th>
+                            <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Date</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -425,7 +426,7 @@ export default function UploadFile() {
                               <td className="px-3 py-2 text-sm text-neutral-600">{record.description}</td>
                               <td className="px-3 py-2 text-right text-sm text-neutral-600">{record.quantity}</td>
                               <td className="px-3 py-2 text-right text-xs text-neutral-400">
-                                {new Date(record.created_at).toLocaleString()}
+                                {formatLedgerDate(record.created_at)}
                               </td>
                             </tr>
                           ))}

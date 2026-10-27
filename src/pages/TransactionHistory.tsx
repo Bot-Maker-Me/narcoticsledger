@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { useTransactions, useFilteredTransactions } from '@/hooks/useTransactions';
+import { formatLedgerDate } from '@/lib/ledgerDate';
 import type { TransactionType } from '@/types/transaction';
 
 const PAGE_SIZE = 10;
@@ -24,16 +25,6 @@ const typeConfig: Record<
   DISPENSE: { icon: ArrowDownCircle, style: 'bg-error-50 text-error-700', label: 'Dispense' },
   ADJUSTMENT: { icon: SlidersHorizontal, style: 'bg-warning-50 text-warning-700', label: 'Adjustment' },
 };
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
 
 function SkeletonRow() {
   return (
@@ -288,7 +279,7 @@ export default function TransactionHistory() {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-sm text-neutral-500">{formatDate(tx.created_at)}</span>
+                          <span className="text-sm text-neutral-500">{formatLedgerDate(tx.created_at)}</span>
                         </td>
                       </tr>
                     );
