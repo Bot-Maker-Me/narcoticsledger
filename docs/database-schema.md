@@ -162,11 +162,24 @@ All are `SECURITY DEFINER` with `search_path = public`.
 ### Admin (all start with `public.is_admin()`)
 
 `is_admin()`, `admin_list_users()`, `admin_extend_trial(user_id, days)`,
-`admin_activate_subscription(user_id)`, `admin_revoke_access(user_id)`,
+`admin_activate_subscription(user_id)`, `admin_cancel_subscription(user_id)`,
+`admin_revoke_access(user_id)`, `admin_set_role(user_id, role)`,
 `admin_update_pricing(price_cents, trial_days)`, `admin_system_health()`,
 `admin_list_audit_logs(limit)`.
 
 Every mutating admin function appends a row to `audit_logs`.
+
+Guards worth keeping when these change:
+
+- `admin_set_role` refuses to change the caller's own role, and refuses to demote the **last**
+  remaining admin — otherwise the panel could be left with no administrator. The role CHECK
+  still allows only `user` and `admin`; there is no third "super admin" tier.
+- `admin_cancel_subscription` is an in-app access change only. It does **not** cancel the
+  Stripe subscription, so billing continues until the customer cancels through the billing
+  portal or an operator cancels it in the Stripe dashboard.
+- Being an admin grants account, plan and audit-log control — **not** access to other
+  pharmacies' data. `drugs`, `inventory_transactions`, `prescriptions` and the reconciliation
+  tables have no admin read policy, so row level security still scopes them to their owner.
 
 ## Invariants worth protecting
 

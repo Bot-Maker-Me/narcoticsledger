@@ -7,6 +7,7 @@ import type {
   SystemHealth,
   AuditLog,
   SubscriptionStatus,
+  UserRole,
 } from '@/types/admin';
 
 /**
@@ -93,6 +94,27 @@ async function activateSubscription(userId: string): Promise<void> {
 
 async function revokeAccess(userId: string): Promise<void> {
   const { error } = await supabase.rpc('admin_revoke_access', { p_user_id: userId });
+  if (error) throw error;
+}
+
+/**
+ * Marks a subscription cancelled. This is an in-app access change only — it does not stop
+ * Stripe billing, which stays with the customer (billing portal) or the Stripe dashboard.
+ */
+async function cancelSubscription(userId: string): Promise<void> {
+  const { error } = await supabase.rpc('admin_cancel_subscription', { p_user_id: userId });
+  if (error) throw error;
+}
+
+/**
+ * Promotes or demotes an admin. The database refuses self-changes and refuses to demote the
+ * last remaining admin, so the panel can never be left without an administrator.
+ */
+async function setUserRole(userId: string, role: UserRole): Promise<void> {
+  const { error } = await supabase.rpc('admin_set_role', {
+    p_user_id: userId,
+    p_role: role,
+  });
   if (error) throw error;
 }
 
@@ -183,6 +205,16 @@ export function useActivateSubscription() {
 
 export function useRevokeAccess() {
   return useAdminMutation((userId: string) => revokeAccess(userId));
+}
+
+export function useCancelSubscription() {
+  return useAdminMutation((userId: string) => cancelSubscription(userId));
+}
+
+export function useSetUserRole() {
+  return useAdminMutation(({ userId, role }: { userId: string; role: UserRole }) =>
+    setUserRole(userId, role)
+  );
 }
 
 export function useUpdatePricing() {
