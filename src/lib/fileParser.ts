@@ -23,10 +23,21 @@ export interface FileParseResult {
   };
 }
 
+/** One parsed transaction row, with the quantity already converted to total units. */
+export interface ParsedIndividualRow {
+  din: string;
+  description?: string;
+  /** Total units: packs x pack size for purchases, dispensed units for dispensations. */
+  quantity: number;
+  date: Date | null;
+  type: 'purchase' | 'dispense';
+  /** The multiplier that was applied to turn packs into units (1 when none). */
+  packSize: number;
+}
+
 /**
  * Returns the pack size for a DIN from the CDSA/DPD reference, or null when the DIN
- * is unknown. When provided, every imported quantity is multiplied by it so the app
- * stores total units instead of packs.
+ * is unknown. It is only a fallback for files that do not state a pack size in the row.
  */
 export type PackSizeResolver = (din: string) => number | null;
 
@@ -195,6 +206,84 @@ interface ParsedRow {
 }
 
 /**
+ * Column names that explicitly carry a pack size. Deliberately strict: a generic
+ * "Size" or "Package" column describes the product itself (bottle size, dose form),
+ * not how many units the pharmacy received, so using it as a multiplier inflated
+ * imported quantities.
+ */
+const PACK_SIZE_COLUMNS = ['Pack Size', 'PackSize', 'Package Size', 'Pkg Size', 'Packs'];
+
+/** Sanity bounds for a pack size read out of a product description. */
+const MIN_PACK_SIZE = 2;
+const MAX_PACK_SIZE = 6000;
+
+/**
+ * Purchases are reported in packs and the pack size is the trailing number of the
+ * product description, e.g. "DILAUDID TB 8MG          100" -> 100,
+ * "HYDROMORPH CONTIN CAP12MG 60" -> 60, "PMS BUPREN NAL TB 8MG/2MG 30" -> 30.
+ *
+ * Returns null when the description has no usable trailing number, e.g.
+ * "ODAN METHAD UNFLAV SF SOL 1L" (a single bottle is the pack) or
+ * "PDP HYDROCODONE 1MG/ML 500ML" (a 500 mL bottle is still one unit).
+ */
+function extractPackSizeFromDescription(description: unknown): number | null {
+  const desc = String(description ?? '').trim();
+  // A real description always contains letters; this keeps a stray date or price cell
+  // from ever being read as a pack size.
+  if (!desc || !/[A-Za-z]/.test(desc)) return null;
+
+  // The pack size is the number that ends the description. A description ending in a
+  // unit ("8MG", "500ML", "5G") is not a pack size, so it falls through to null.
+  const match = desc.match(/(\d{1,4})\s*$/);
+  if (!match) return null;
+
+  const size = parseInt(match[1], 10);
+  if (!Number.isFinite(size) || size < MIN_PACK_SIZE || size > MAX_PACK_SIZE) return null;
+  return size;
+}
+
+/**
+ * Resolves the pack size for a single imported row.
+ *
+ * The description wins, because one DIN can legitimately arrive in different pack
+ * sizes (e.g. TEVA OXYCOC 100s and 500s in the same file) and each row has to be
+ * converted with its own pack size. An explicit pack-size column is only used when
+ * the description carries no number, and the drug/reference pack size only when the
+ * file says nothing at all.
+ */
+function resolvePackSize(
+  row: ParsedRow,
+  din: string,
+  descriptionKey: string | null,
+  packSizeKey: string | null,
+  packSizeFor?: PackSizeResolver
+): number {
+  const fromDescription = extractPackSizeFromDescription(descriptionKey ? row[descriptionKey] : null);
+  if (fromDescription !== null) return fromDescription;
+
+  if (packSizeKey) {
+    const fromColumn = extractNumber(row[packSizeKey]);
+    if (fromColumn > 1) return fromColumn;
+  }
+
+  const resolved = packSizeFor ? packSizeFor(din) : null;
+  return resolved !== null && resolved > 1 ? resolved : 1;
+}
+
+function resolveTransactionType(
+  row: ParsedRow,
+  source: 'mckesson' | 'kroll',
+  typeKey: string | null
+): 'purchase' | 'dispense' {
+  if (source === 'mckesson') return 'purchase';
+
+  const typeVal = typeKey ? String(row[typeKey] ?? '').toLowerCase() : '';
+  const isPurchase =
+    typeVal.includes('purchase') || typeVal.includes('receive') || typeVal.includes('adjust+');
+  return isPurchase ? 'purchase' : 'dispense';
+}
+
+/**
  * Resolves the server-side CDSA/DPD reference for every DIN in the file before the rows
  * are aggregated, so drug names, schedules and pack sizes are available while parsing.
  */
@@ -239,13 +328,12 @@ function aggregateRows(
   const dateKey = findColumnKey(keys, ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date']);
   // More specific drug description column names to avoid picking up patient names
   const descKey = findColumnKey(keys, ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Product', 'Medication']);
-  // Pack size column for multiplying quantity
-  const packSizeKey = findColumnKey(keys, ['Pack Size', 'PackSize', 'Package Size', 'Size', 'Package', 'Pkg Size']);
+  const packSizeKey = findColumnKey(keys, PACK_SIZE_COLUMNS);
 
   const result = new Map<string, ParsedDinData>();
   let skippedCount = 0;
-  let packSizeMatches = 0;
-  let packSizeMisses = 0;
+  let convertedCount = 0;
+  let noPackSizeCount = 0;
 
   for (const row of rows) {
     const din = normalizeDin(String(row[dinKey] ?? ''));
@@ -262,7 +350,7 @@ function aggregateRows(
     let qty = qtyKey ? extractNumber(row[qtyKey]) : 1;
     const date = dateKey ? extractDate(row[dateKey]) : null;
 
-    // Generate row signature for deduplication
+    // Generate row signature for deduplication (on the raw, as-reported quantity)
     if (seenSignatures) {
       const signature = generateRowSignature(din, qty, date, row);
       if (seenSignatures.has(signature)) {
@@ -273,91 +361,21 @@ function aggregateRows(
       seenSignatures.add(signature);
     }
 
-    // Convert to total units: the pack size for this DIN (CDSA/DPD reference or the
-    // drug record) wins, otherwise fall back to a pack size found inside the file.
-    let packSize = 1;
-    const resolvedPackSize = packSizeFor ? packSizeFor(din) : null;
-    const hasPackSize = resolvedPackSize !== null && resolvedPackSize > 0;
-    if (hasPackSize) {
-      packSize = resolvedPackSize as number;
-      packSizeMatches += 1;
-    } else {
-      packSizeMisses += 1;
-    }
+    const transactionType = resolveTransactionType(row, source, typeKey);
 
-    if (source === 'mckesson' && !hasPackSize) {
-      // Try to get pack size from column first
-      if (packSizeKey) {
-        const colPackSize = extractNumber(row[packSizeKey]);
-        if (colPackSize > 1) {
-          packSize = colPackSize;
-          console.log(`DIN ${din}: Found pack size in column: ${packSize}`);
-        }
+    if (transactionType === 'purchase') {
+      // Purchases arrive in packs, so the reported quantity has to be multiplied by
+      // the pack size to get total units. Dispensing files already report units.
+      const packSize = resolvePackSize(row, din, descKey, packSizeKey, packSizeFor);
+      if (packSize > 1) {
+        qty = qty * packSize;
+        convertedCount++;
+      } else {
+        noPackSizeCount++;
       }
-
-      // Extract from description if not found in column
-      if (packSize === 1 && descKey) {
-        const desc = String(row[descKey] ?? '').trim();
-        console.log(`DIN ${din}: Description = "${desc}"`);
-
-        // Look for patterns like "0.5MG500" (dosage followed immediately by pack size)
-        const dosageThenPackMatch = desc.match(/(\d+(?:\.\d+)?)MG(\d{2,4})\b/i);
-        if (dosageThenPackMatch) {
-          packSize = parseInt(dosageThenPackMatch[2], 10);
-          console.log(`DIN ${din}: Found pack size after MG: ${packSize}`);
-        }
-
-        // Look for patterns like "TB 0.5MG 500" (space between dosage and pack size)
-        const spaceMatch = desc.match(/(\d+(?:\.\d+)?)MG\s+(\d{2,4})\b/i);
-        if (spaceMatch && packSize === 1) {
-          packSize = parseInt(spaceMatch[2], 10);
-          console.log(`DIN ${din}: Found pack size after MG with space: ${packSize}`);
-        }
-
-        // Look for liquid/injection patterns like "100ML", "5ML"
-        const mlMatch = desc.match(/(\d+)\s*ML\b/i);
-        if (mlMatch && packSize === 1) {
-          packSize = parseInt(mlMatch[1], 10);
-          console.log(`DIN ${din}: Found ML pack size: ${packSize}`);
-        }
-
-        // Look for patterns like "100 TAB", "100 CAP"
-        const tabMatch = desc.match(/(\d+)\s*(TAB|CAP|PK|PACK)\b/i);
-        if (tabMatch && packSize === 1) {
-          packSize = parseInt(tabMatch[1], 10);
-          console.log(`DIN ${din}: Found TAB/CAP pack size: ${packSize}`);
-        }
-
-        // Fallback: last 2-4 digit number in description
-        const endMatch = desc.match(/\b(\d{2,4})\b$/);
-        if (endMatch && packSize === 1) {
-          packSize = parseInt(endMatch[1], 10);
-          console.log(`DIN ${din}: Found end number pack size: ${packSize}`);
-        }
-      }
-
-    }
-
-    // Quantities are always recorded as total units (packs x pack size).
-    if (packSize > 1) {
-      console.log(`DIN ${din}: Quantity ${qty} x Pack Size ${packSize} = ${qty * packSize}`);
-      qty = qty * packSize;
-    }
-
-    let transactionType: 'purchase' | 'dispense';
-    
-    if (source === 'mckesson') {
-      transactionType = 'purchase';
       existing.purchased += qty;
     } else {
-      const typeVal = typeKey ? String(row[typeKey] ?? '').toLowerCase() : '';
-      if (typeVal.includes('purchase') || typeVal.includes('receive') || typeVal.includes('adjust+')) {
-        transactionType = 'purchase';
-        existing.purchased += qty;
-      } else {
-        transactionType = 'dispense';
-        existing.dispensed += qty;
-      }
+      existing.dispensed += qty;
     }
 
     // Track individual transaction for deduplication
@@ -382,12 +400,9 @@ function aggregateRows(
     result.set(din, existing);
   }
 
-  if (packSizeFor) {
-    console.log(
-      `[file-parser] ${source}: pack size applied to ${packSizeMatches} rows, ${packSizeMisses} rows had no pack size`
-    );
-  }
-  console.log(`Aggregated ${rows.length} rows for ${source}, skipped ${skippedCount} duplicates`);
+  console.log(
+    `[file-parser] ${source}: ${convertedCount} purchase rows converted to units with a pack size, ${noPackSizeCount} had none, ${skippedCount} duplicates skipped`
+  );
   return result;
 }
 
@@ -397,7 +412,7 @@ function parseIndividualRows(
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
-): Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }> {
+): ParsedIndividualRow[] {
   if (rows.length === 0) return [];
 
   const keys = Object.keys(rows[0]);
@@ -416,10 +431,12 @@ function parseIndividualRows(
   const typeKey = findColumnKey(keys, ['Type', 'Transaction Type', 'Action', 'Direction']);
   const dateKey = findColumnKey(keys, ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date']);
   const descKey = findColumnKey(keys, ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Product', 'Medication']);
-  const packSizeKey = findColumnKey(keys, ['Pack Size', 'PackSize', 'Package Size', 'Size', 'Package', 'Pkg Size']);
+  const packSizeKey = findColumnKey(keys, PACK_SIZE_COLUMNS);
 
-  const result: Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }> = [];
+  const result: ParsedIndividualRow[] = [];
   let skippedCount = 0;
+  let convertedCount = 0;
+  let noPackSizeCount = 0;
 
   for (const row of rows) {
     const din = normalizeDin(String(row[dinKey] ?? ''));
@@ -428,7 +445,7 @@ function parseIndividualRows(
     let qty = qtyKey ? extractNumber(row[qtyKey]) : 1;
     const date = dateKey ? extractDate(row[dateKey]) : null;
 
-    // Generate row signature for deduplication
+    // Generate row signature for deduplication (on the raw, as-reported quantity)
     if (seenSignatures) {
       const signature = generateRowSignature(din, qty, date, row);
       if (seenSignatures.has(signature)) {
@@ -439,92 +456,38 @@ function parseIndividualRows(
       seenSignatures.add(signature);
     }
 
-    // Convert to total units: the pack size for this DIN (CDSA/DPD reference or the
-    // drug record) wins, otherwise fall back to a pack size found inside the file.
+    const transactionType = resolveTransactionType(row, source, typeKey);
+
+    // Purchases arrive in packs, so the reported quantity has to be multiplied by the
+    // pack size to get total units. Dispensing files already report units.
     let packSize = 1;
-    const resolvedPackSize = packSizeFor ? packSizeFor(din) : null;
-    const hasPackSize = resolvedPackSize !== null && resolvedPackSize > 0;
-    if (hasPackSize) {
-      packSize = resolvedPackSize as number;
-      console.log(`DIN ${din}: Pack size ${packSize} applied to quantity ${qty}`);
-    }
-
-    if (source === 'mckesson' && !hasPackSize) {
-      if (packSizeKey) {
-        const colPackSize = extractNumber(row[packSizeKey]);
-        if (colPackSize > 1) {
-          packSize = colPackSize;
-        }
-      }
-
-      if (packSize === 1 && descKey) {
-        const desc = String(row[descKey] ?? '').trim();
-        const dosageThenPackMatch = desc.match(/(\d+(?:\.\d+)?)MG(\d{2,4})\b/i);
-        if (dosageThenPackMatch) {
-          packSize = parseInt(dosageThenPackMatch[2], 10);
-        }
-
-        const spaceMatch = desc.match(/(\d+(?:\.\d+)?)MG\s+(\d{2,4})\b/i);
-        if (spaceMatch && packSize === 1) {
-          packSize = parseInt(spaceMatch[2], 10);
-        }
-
-        const mlMatch = desc.match(/(\d+)\s*ML\b/i);
-        if (mlMatch && packSize === 1) {
-          packSize = parseInt(mlMatch[1], 10);
-        }
-
-        const tabMatch = desc.match(/(\d+)\s*(TAB|CAP|PK|PACK)\b/i);
-        if (tabMatch && packSize === 1) {
-          packSize = parseInt(tabMatch[1], 10);
-        }
-
-        const endMatch = desc.match(/\b(\d{2,4})\b$/);
-        if (endMatch && packSize === 1) {
-          packSize = parseInt(endMatch[1], 10);
-        }
-      }
-
-    }
-
-    // Quantities are always recorded as total units (packs x pack size).
-    if (packSize > 1) {
-      qty = qty * packSize;
-    }
-
-    let transactionType: 'purchase' | 'dispense';
-    
-    if (source === 'mckesson') {
-      transactionType = 'purchase';
-    } else {
-      const typeVal = typeKey ? String(row[typeKey] ?? '').toLowerCase() : '';
-      if (typeVal.includes('purchase') || typeVal.includes('receive') || typeVal.includes('adjust+')) {
-        transactionType = 'purchase';
+    if (transactionType === 'purchase') {
+      packSize = resolvePackSize(row, din, descKey, packSizeKey, packSizeFor);
+      if (packSize > 1) {
+        qty = qty * packSize;
+        convertedCount++;
       } else {
-        transactionType = 'dispense';
+        noPackSizeCount++;
       }
     }
 
     const description = descKey ? String(row[descKey] ?? '').trim() : undefined;
+    const entry: ParsedIndividualRow = {
+      din,
+      quantity: qty,
+      date,
+      type: transactionType,
+      packSize,
+    };
     if (description && description.length > 5) {
-      result.push({
-        din,
-        description,
-        quantity: qty,
-        date,
-        type: transactionType
-      });
-    } else {
-      result.push({
-        din,
-        quantity: qty,
-        date,
-        type: transactionType
-      });
+      entry.description = description;
     }
+    result.push(entry);
   }
 
-  console.log(`Parsed ${result.length} individual rows for ${source}, skipped ${skippedCount} duplicates`);
+  console.log(
+    `Parsed ${result.length} individual rows for ${source}: ${convertedCount} purchase rows converted to units with a pack size, ${noPackSizeCount} had none, ${skippedCount} duplicates skipped`
+  );
   return result;
 }
 
@@ -591,7 +554,7 @@ export async function parseSingleFileWithIndividualRows(
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
-): Promise<{ data: Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }>; preview: FilePreview }> {
+): Promise<{ data: ParsedIndividualRow[]; preview: FilePreview }> {
   const ext = file.name.split('.').pop()?.toLowerCase();
 
   let rows: ParsedRow[] = [];

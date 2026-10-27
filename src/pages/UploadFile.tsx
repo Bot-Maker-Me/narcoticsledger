@@ -12,7 +12,7 @@ import {
   FileText as FileIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { parseSingleFileWithIndividualRows, type FilePreview } from '@/lib/fileParser';
+import { parseSingleFileWithIndividualRows, type FilePreview, type ParsedIndividualRow } from '@/lib/fileParser';
 import { createPackSizeResolver } from '@/lib/dinReference';
 import { formatLedgerDate } from '@/lib/ledgerDate';
 import { useDrugs } from '@/hooks/useDrugs';
@@ -61,7 +61,7 @@ export default function UploadFile() {
   const [files, setFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [parsing, setParsing] = useState(false);
-  const [individualRows, setIndividualRows] = useState<Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }>>([]);
+  const [individualRows, setIndividualRows] = useState<ParsedIndividualRow[]>([]);
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
 
@@ -114,11 +114,13 @@ export default function UploadFile() {
 
     setParsing(true);
     try {
-      // Quantities are converted to total units via each drug record's Pack Size.
+      // Purchase quantities are converted to total units by the pack size that ends each
+      // product description (e.g. "DILAUDID TB 8MG 100" -> 100). The drug record's pack
+      // size is only used when a file states no pack size at all.
       const packSizeFor = createPackSizeResolver(drugs ?? []);
 
       const seenSignatures = new Set<string>();
-      let allRows: Array<{ din: string; description?: string; quantity: number; date: Date | null; type: 'purchase' | 'dispense' }> = [];
+      let allRows: ParsedIndividualRow[] = [];
       let previews: FilePreview[] = [];
 
       for (const file of files) {
@@ -267,6 +269,7 @@ export default function UploadFile() {
                   <tr className="border-b border-neutral-100 bg-neutral-50/50">
                     <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">DIN</th>
                     <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-500">Description</th>
+                    <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">Pack</th>
                     <th className="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider text-neutral-500">
                       {selectedType === 'purchase' ? 'Purchased' : selectedType === 'dispense' ? 'Dispensed' : 'Destroyed'}
                     </th>
@@ -278,6 +281,9 @@ export default function UploadFile() {
                     <tr key={`${row.din}-${index}`} className="border-b border-neutral-50 hover:bg-neutral-50/50">
                       <td className="px-3 py-3 text-sm font-mono text-neutral-800">{row.din}</td>
                       <td className="px-3 py-3 text-sm text-neutral-600">{row.description ?? '—'}</td>
+                      <td className="px-3 py-3 text-right text-sm text-neutral-500">
+                        {row.packSize > 1 ? `× ${row.packSize}` : '—'}
+                      </td>
                       <td className="px-3 py-3 text-right text-sm text-neutral-600">{row.quantity}</td>
                       <td className="px-3 py-3 text-right text-xs text-neutral-400">
                         {row.date ? row.date.toLocaleDateString() : '—'}
@@ -286,7 +292,7 @@ export default function UploadFile() {
                   ))}
                   {individualRows.length > 20 && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-2 text-center text-xs text-neutral-400">
+                      <td colSpan={5} className="px-3 py-2 text-center text-xs text-neutral-400">
                         ... and {individualRows.length - 20} more rows
                       </td>
                     </tr>
