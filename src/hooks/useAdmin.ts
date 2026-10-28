@@ -36,7 +36,7 @@ async function fetchAdminUsers(): Promise<AdminUser[]> {
   const { data, error } = await supabase.rpc('admin_list_users');
   if (error) throw error;
 
-  return (data ?? []).map((user) => ({
+  return (data ?? []).map((user: AdminUser) => ({
     id: user.id,
     email: user.email,
     role: user.role,
