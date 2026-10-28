@@ -17,6 +17,7 @@ import { formatLedgerDate } from '@/lib/ledgerDate';
 import { getErrorMessage } from '@/lib/errors';
 import type { TransactionType } from '@/types/transaction';
 import SectionMarker from '@/components/SectionMarker';
+import VoidedCleanupCard from '@/components/records/VoidedCleanupCard';
 
 const PAGE_SIZE = 10;
 
@@ -348,6 +349,8 @@ export default function TransactionHistory() {
           </div>
         )}
       </div>
+
+      <VoidedCleanupCard />
     </div>
   );
 }

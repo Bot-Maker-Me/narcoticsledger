@@ -144,7 +144,8 @@ group by d.id, d.user_id, d.din, d.description, d.schedule;
 
 ## Functions
 
-All are `SECURITY DEFINER` with `search_path = public`.
+All are `SECURITY DEFINER` and pin `search_path` — most to `public`, the ledger cleanup
+functions to an empty path with fully-qualified names.
 
 ### User-facing
 
@@ -156,6 +157,8 @@ All are `SECURITY DEFINER` with `search_path = public`.
 | `dispense_drug(p_drug_id, p_quantity, p_patient_name, p_notes)` | Stock-checked dispensation. Writes only a ledger row — it does **not** fabricate a prescription. |
 | `dispense_prescription(p_prescription_id, p_quantity)` | Validates ownership, status, remaining quantity and stock, writes the ledger row, and updates the prescription. |
 | `void_imported_records(p_transaction_type, p_file_name, p_start, p_end)` | Soft-voids a file's rows (or a date range for pre-file-name records). Returns the number voided. Re-voiding is a no-op. |
+| `voided_ledger_summary(p_group_by)` | The caller's **voided** rows grouped by `'month'` (the ledger/transaction date) or `'file'`, with counts, date ranges and the voided timestamp. Feeds the cleanup card on Transaction History. |
+| `purge_voided_transactions(p_month, p_file_name, p_all)` | **Physically deletes** the caller's voided rows for exactly one scope (`YYYY-MM`, a file name — `''` for rows with none — or the whole voided set), appends the purge to `audit_logs` and returns the number deleted. |
 | `update_reconciliation_opening(...)` / `update_actual_count(...)` | Update a reconciliation item and recompute `flag`. |
 | `complete_reconciliation_cycle(...)` | Marks a cycle completed and records who performed/verified it. |
 
@@ -184,7 +187,10 @@ Guards worth keeping when these change:
 ## Invariants worth protecting
 
 1. **`inventory_transactions` is append-only.** Never grant `UPDATE`/`DELETE` back to
-   `authenticated`, and never let a void RPC touch any other column.
+   `authenticated`, and never let a void RPC touch any other column. The one deliberate
+   exception is `purge_voided_transactions`, which deletes **voided** rows through a
+   `SECURITY DEFINER` RPC: keep its `voided_at IS NOT NULL` rail, keep the `audit_logs`
+   entry, and never add a delete path that can reach a live row.
 2. **`transaction_type` is uppercase and constrained.** All writers (imports, RPCs) must
    match, or inserts fail.
 3. **The flag rule lives in two places**: `update_actual_count()` /
