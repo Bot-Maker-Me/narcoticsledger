@@ -1,15 +1,19 @@
 /**
  * Validation for user-supplied spreadsheet files.
  *
- * A file name or a browser-reported MIME type is just a claim, so each file is checked on
- * four independent things before it is handed to a parser: extension, MIME type, size and
- * the file's first bytes ("magic numbers"). A renamed executable, archive or workbook
- * fails the last one even when the first three are forged.
+ * The extension is the only gate on the file's *name*, because everything else a browser
+ * reports about a file is a claim: Windows reports a `.csv` as `application/vnd.ms-excel`,
+ * and some browsers report nothing at all. A MIME type is therefore never used to reject a
+ * file - `isSupportedFile`/`uploadKindOf` accept any .csv, .xlsx or .xls.
+ *
+ * What is checked instead is the file itself: it must not be empty, it must fit the size
+ * limit, and its leading bytes must not be one of the binary container signatures below,
+ * which catches an .exe/.zip/.png renamed to .csv.
  */
 
 export type UploadKind = 'csv' | 'xlsx' | 'xls';
 
-/** Largest file accepted. Real supplier exports are well under 5 MB. */
+/** Largest file accepted. A busy pharmacy's two-month Kroll dispensing export is ~10 MB. */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 const KIND_BY_EXTENSION: Record<string, UploadKind> = {
@@ -18,24 +22,13 @@ const KIND_BY_EXTENSION: Record<string, UploadKind> = {
   xls: 'xls',
 };
 
-/**
- * MIME types browsers actually report for each kind. The empty string is included because
- * Windows and some browsers report nothing for CSV/XLS; the magic-byte check still applies.
- */
-const MIME_BY_KIND: Record<UploadKind, readonly string[]> = {
-  csv: ['', 'text/csv', 'text/plain', 'application/csv', 'application/vnd.ms-excel', 'application/octet-stream'],
-  xlsx: [
-    '',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/octet-stream',
-  ],
-  xls: ['', 'application/vnd.ms-excel', 'application/octet-stream'],
-};
-
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // .xlsx is a ZIP container
 const OLE2_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]; // legacy .xls
 
-/** Containers and executables a CSV is sometimes renamed from. */
+/**
+ * Containers and executables a CSV is sometimes renamed from. The two workbook formats are
+ * included so an .xlsx/.xls saved as .csv is caught instead of being parsed as garbage.
+ */
 const BINARY_MAGIC: readonly (readonly number[])[] = [
   [0x4d, 0x5a], // MZ - DOS/Windows executable
   [0x7f, 0x45, 0x4c, 0x46], // ELF
@@ -71,7 +64,10 @@ function startsWith(bytes: Uint8Array, magic: readonly number[]): boolean {
 
 export type ValidationResult = { ok: true; kind: UploadKind } | { ok: false; reason: string };
 
-/** Full validation: extension, MIME type, size, then the file's leading bytes. */
+/**
+ * Full validation: extension, size, then the file's leading bytes. The browser-reported
+ * MIME type is deliberately not consulted - see the module comment.
+ */
 export async function validateUpload(file: File): Promise<ValidationResult> {
   const kind = uploadKindOf(file.name);
   if (!kind) {
@@ -85,10 +81,6 @@ export async function validateUpload(file: File): Promise<ValidationResult> {
     return { ok: false, reason: `"${file.name}" is larger than ${limit} MB` };
   }
 
-  if (!MIME_BY_KIND[kind].includes(file.type)) {
-    return { ok: false, reason: `"${file.name}" does not look like a ${kind.toUpperCase()} file (${file.type})` };
-  }
-
   const head = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
 
   if (kind === 'xlsx' && !startsWith(head, ZIP_MAGIC)) {
@@ -97,18 +89,14 @@ export async function validateUpload(file: File): Promise<ValidationResult> {
   if (kind === 'xls' && !startsWith(head, OLE2_MAGIC)) {
     return { ok: false, reason: `"${file.name}" is not a valid .xls workbook` };
   }
-  // A renamed workbook, archive or executable is caught by its signature.
-  //
-  // This test used to be "a text export never contains a NUL byte", which rejected genuine
-  // supplier files: Kroll writes a NUL placeholder into every empty column (about four per
-  // dispensing row), so a real "Disp Kroll ... .csv" failed as "not a text CSV file". A NUL
-  // in the opening bytes of the file is still proof of a binary blob, because no text export
-  // starts with one.
-  if (
-    kind === 'csv' &&
-    (BINARY_MAGIC.some((magic) => startsWith(head, magic)) || head.slice(0, 16).includes(0))
-  ) {
-    return { ok: false, reason: `"${file.name}" is not a text CSV file` };
+  // NUL bytes are NOT treated as evidence of a binary file: Kroll writes a NUL placeholder
+  // into every empty column, so a genuine dispensing export is full of them. `parseRowsCore`
+  // strips them before parsing, and only a real container signature is rejected here.
+  if (kind === 'csv' && BINARY_MAGIC.some((magic) => startsWith(head, magic))) {
+    return {
+      ok: false,
+      reason: `"${file.name}" is not a text CSV file. It looks like a renamed archive, workbook or executable.`,
+    };
   }
 
   return { ok: true, kind };

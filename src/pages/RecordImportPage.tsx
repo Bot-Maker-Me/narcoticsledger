@@ -31,7 +31,8 @@ function quantityOf(kind: ImportKind, record: ParsedDinData): number {
  */
 export default function RecordImportPage({ kind }: { kind: ImportKind }) {
   const meta = RECORD_KINDS[kind];
-  const { files, dragOver, setDragOver, handleDrop, handleSelect, remove, clear } = useFileList();
+  const { files, dragOver, preparing, setDragOver, handleDrop, handleSelect, remove, clear } =
+    useFileList();
 
   const { data: savedRecords, isLoading: savedLoading } = useImportedRecords(kind);
   const { data: drugs } = useDrugs();
@@ -153,6 +154,7 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
           icon={meta.icon}
           files={files}
           dragOver={dragOver}
+          preparing={preparing}
           onDrop={handleDrop}
           onDragOver={(event) => {
             event.preventDefault();
