@@ -129,8 +129,17 @@ async function ensureDrugId(din: string, description?: string): Promise<string> 
 }
 
 /**
- * Resolves the drug for every DIN and writes the rows in one batch, falling back to
- * row-by-row inserts when a batch is rejected so one bad row cannot lose the whole file.
+ * Rows per insert request.
+ *
+ * A whole supplier export is far too large to insert in one request (this file's
+ * dispensing export is ~40,000 rows), and when the single insert was rejected the old
+ * code fell back to one request *per row*, so the import never finished.
+ */
+const INSERT_CHUNK_SIZE = 500;
+
+/**
+ * Resolves the drug for every DIN and writes the rows in batches, falling back to
+ * row-by-row inserts inside a failed batch so one bad row cannot lose the whole file.
  */
 async function persistTransactions(
   kind: ImportKind,
@@ -154,9 +163,9 @@ async function persistTransactions(
   }
 
   const usable = pending.filter((row) => !failedDins.has(row.din));
-  const skipped = pending.length - usable.length;
+  let unsaved = pending.length - usable.length;
 
-  if (usable.length === 0) return { saved: 0, skipped, errors };
+  if (usable.length === 0) return { saved: 0, skipped: unsaved, errors };
 
   const transactions = usable.map((row) => ({
     drug_id: drugIdMap.get(row.din),
@@ -166,24 +175,31 @@ async function persistTransactions(
     file_name: fileName,
   }));
 
-  const { error: batchError } = await supabase.from('inventory_transactions').insert(transactions);
-  if (!batchError) return { saved: transactions.length, skipped, errors };
-
-  console.error('[import] batch insert failed, retrying row by row:', batchError);
-
   let saved = 0;
-  let failed = skipped;
-  for (const transaction of transactions) {
-    const { error: rowError } = await supabase.from('inventory_transactions').insert(transaction);
-    if (rowError) {
-      errors.push(`Transaction error: ${rowError.message}`);
-      failed += 1;
-    } else {
-      saved += 1;
+
+  for (let start = 0; start < transactions.length; start += INSERT_CHUNK_SIZE) {
+    const chunk = transactions.slice(start, start + INSERT_CHUNK_SIZE);
+
+    const { error: chunkError } = await supabase.from('inventory_transactions').insert(chunk);
+    if (!chunkError) {
+      saved += chunk.length;
+      continue;
+    }
+
+    console.error('[import] batch insert failed, retrying row by row:', chunkError);
+
+    for (const transaction of chunk) {
+      const { error: rowError } = await supabase.from('inventory_transactions').insert(transaction);
+      if (rowError) {
+        errors.push(`Transaction error: ${rowError.message}`);
+        unsaved += 1;
+      } else {
+        saved += 1;
+      }
     }
   }
 
-  return { saved, skipped: failed, errors };
+  return { saved, skipped: unsaved, errors };
 }
 
 /** Aggregated import: one ledger row per DIN (used by reconciliation-style imports). */

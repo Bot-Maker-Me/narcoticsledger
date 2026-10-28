@@ -129,7 +129,23 @@ export function generateRowSignature(
   }
 
   const keys = Object.keys(row);
-  const invoiceKey = findColumnKey(keys, ['Invoice', 'Invoice #', 'Invoice Number', 'Transaction #', 'Transaction ID', 'Order #', 'Order Number']);
+  // Invoice-like identifiers. A dispensing export has no invoice, so the prescription
+  // number is what tells two transactions apart: the same drug, quantity and day for two
+  // different prescriptions were treated as one row and 70% of a Kroll dispensing export
+  // was silently discarded.
+  const invoiceKey = findColumnKey(keys, [
+    'Invoice',
+    'Invoice #',
+    'Invoice Number',
+    'Transaction #',
+    'Transaction ID',
+    'Order #',
+    'Order Number',
+    'Rx',
+    'Rx Number',
+    'Prescription #',
+    'Prescription Number',
+  ]);
   if (invoiceKey && row[invoiceKey]) {
     parts.push(String(row[invoiceKey]).trim());
   }
@@ -178,7 +194,8 @@ function extractDate(value: unknown): Date | null {
   return isNaN(date.getTime()) ? null : date;
 }
 
-const DATE_COLUMNS = ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date'];
+/** Date headings seen in supplier exports. "First FillDate" is deliberately absent. */
+export const DATE_COLUMNS = ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date'];
 
 function detectDateRange(rows: ParsedRow[]): { start: Date | null; end: Date | null } {
   if (rows.length === 0) return { start: null, end: null };
@@ -197,13 +214,29 @@ function detectDateRange(rows: ParsedRow[]): { start: Date | null; end: Date | n
   return { start: dates[0], end: dates[dates.length - 1] };
 }
 
-function findColumnKey(keys: string[], candidates: string[]): string | null {
+/**
+ * Finds the parsed-row key that matches a candidate column name.
+ *
+ * Exact headings win over partial ones, and earlier candidates win over later ones.
+ * Kroll's dispensing export carries both "First FillDate" and "FillDate"; a single
+ * "does this key contain 'Date'?" test returned the *first* containing key, so every
+ * dispensation was filed under the day the prescription was originally written
+ * instead of the day it was filled.
+ */
+export function findColumnKey(keys: string[], candidates: string[]): string | null {
   const lowerKeys = keys.map((k) => k.toLowerCase().trim());
+
   for (const candidate of candidates) {
-    const needle = candidate.toLowerCase();
-    const idx = lowerKeys.findIndex((k) => k === needle || k.includes(needle));
-    if (idx !== -1) return keys[idx];
+    const index = lowerKeys.indexOf(candidate.toLowerCase().trim());
+    if (index !== -1) return keys[index];
   }
+
+  for (const candidate of candidates) {
+    const needle = candidate.toLowerCase().trim();
+    const index = lowerKeys.findIndex((k) => k.includes(needle));
+    if (index !== -1) return keys[index];
+  }
+
   return null;
 }
 
