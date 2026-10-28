@@ -2,8 +2,8 @@ import { useState, type ChangeEvent, type DragEvent } from 'react';
 import toast from 'react-hot-toast';
 import { padDin } from '@/lib/din';
 import { getErrorMessage } from '@/lib/errors';
-
-const COUNT_FILE_EXTENSIONS = ['csv', 'xlsx', 'xls'];
+import { readFileRows } from '@/lib/readRows';
+import { validateUpload } from '@/lib/uploadValidation';
 
 /** Column headings suppliers vary between, for the DIN and the counted quantity. */
 const DIN_COLUMNS = ['DIN', 'din', 'Drug Identification Number', 'Drug ID'];
@@ -23,13 +23,10 @@ export function useSavedCountFile() {
 
   const parseFile = async (selected: File) => {
     try {
-      const text = await selected.text();
-      const Papa = await import('papaparse');
-      const result = Papa.parse(text, { header: true });
-
       const parsed = new Map<string, number>();
 
-      for (const row of result.data as Array<Record<string, unknown>>) {
+      // Same worker-based reader as the supplier files, so .xlsx saved counts work too.
+      for (const row of await readFileRows(selected)) {
         const rawDin = DIN_COLUMNS.map((column) => row[column]).find(Boolean);
         const rawActual = COUNT_COLUMNS.map((column) => row[column]).find(Boolean);
         if (!rawDin || !rawActual) continue;
@@ -54,30 +51,29 @@ export function useSavedCountFile() {
     }
   };
 
+  const accept = async (candidate: File) => {
+    const result = await validateUpload(candidate);
+    if (!result.ok) {
+      toast.error(result.reason);
+      return;
+    }
+    setFile(candidate);
+    void parseFile(candidate);
+  };
+
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    setDragOver(false);
 
     const dropped = event.dataTransfer.files?.[0];
-    if (!dropped) return;
-
-    const extension = dropped.name.split('.').pop()?.toLowerCase();
-    if (!extension || !COUNT_FILE_EXTENSIONS.includes(extension)) {
-      toast.error('Saved count file must be .csv, .xlsx, or .xls');
-      return;
-    }
-
-    setFile(dropped);
-    setDragOver(false);
-    void parseFile(dropped);
+    if (dropped) void accept(dropped);
   };
 
   const handleSelect = (event: ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0];
-    if (!selected) return;
-
-    setFile(selected);
-    void parseFile(selected);
+    event.target.value = '';
+    if (selected) void accept(selected);
   };
 
   const clear = () => {

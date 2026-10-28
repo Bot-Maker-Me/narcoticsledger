@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import Tippy from '@tippyjs/react';
-import 'tippy.js/dist/tippy.css';
+import { Suspense, lazy, useLayoutEffect, useState } from 'react';
+
+// Tippy + Popper are ~140 KB; they load the first time a tooltip is rendered.
+const Tippy = lazy(() => import('./TippyTooltip'));
 
 interface TooltipProps {
   content: string;
@@ -19,15 +20,10 @@ export default function Tooltip({ content, children, placement = 'top', delay = 
   if (!mounted) return <>{children}</>;
 
   return (
-    <Tippy
-      content={content}
-      placement={placement}
-      delay={delay}
-      theme="light"
-      arrow={true}
-      duration={200}
-    >
-      {children as React.ReactElement}
-    </Tippy>
+    <Suspense fallback={<>{children}</>}>
+      <Tippy content={content} placement={placement} delay={delay}>
+        {children as React.ReactElement}
+      </Tippy>
+    </Suspense>
   );
 }

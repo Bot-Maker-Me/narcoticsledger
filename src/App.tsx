@@ -11,27 +11,45 @@ import Layout from '@/components/Layout';
 import ErrorFallback from '@/components/ErrorFallback';
 import SubscriptionPaywall from '@/components/SubscriptionPaywall';
 import CookieConsent from '@/components/CookieConsent';
+import { MotionProvider } from '@/lib/motion';
 import { hasAccess } from '@/lib/access';
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import Landing from '@/pages/Landing';
 import Dashboard from '@/pages/Dashboard';
-import Inventory from '@/pages/Inventory';
-import Prescriptions from '@/pages/Prescriptions';
-import Reconciliation from '@/pages/Reconciliation';
-import Settings from '@/pages/Settings';
-import TransactionHistory from '@/pages/TransactionHistory';
-import Admin from '@/pages/Admin';
-import Terms from '@/pages/Terms';
 import ResetPassword from '@/pages/ResetPassword';
 import AuthCallback from '@/pages/AuthCallback';
-import PurchaseRecords from '@/pages/PurchaseRecords';
-import DispensingRecords from '@/pages/DispensingRecords';
-import DestructionRecords from '@/pages/DestructionRecords';
-import UploadFile from '@/pages/UploadFile';
 
-// Reports pulls in the chart library, which is heavy and only needed on that route.
+// Every signed-in page except the dashboard is split into its own chunk, so the first
+// load only downloads what the landing/login/dashboard screens need. Reports additionally
+// pulls in the chart library, and Reconciliation/Upload the spreadsheet parser.
+const Inventory = lazy(() => import('@/pages/Inventory'));
+const Prescriptions = lazy(() => import('@/pages/Prescriptions'));
+const Reconciliation = lazy(() => import('@/pages/Reconciliation'));
+const TransactionHistory = lazy(() => import('@/pages/TransactionHistory'));
+const Admin = lazy(() => import('@/pages/Admin'));
+const Terms = lazy(() => import('@/pages/Terms'));
+const PurchaseRecords = lazy(() => import('@/pages/PurchaseRecords'));
+const DispensingRecords = lazy(() => import('@/pages/DispensingRecords'));
+const DestructionRecords = lazy(() => import('@/pages/DestructionRecords'));
+const UploadFile = lazy(() => import('@/pages/UploadFile'));
+const Settings = lazy(() => import('@/pages/Settings'));
 const Reports = lazy(() => import('@/pages/Reports'));
+
+/** Wraps a lazy page so only the content area shows a spinner while its chunk loads. */
+function Lazy({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
 
 function FullPageSpinner() {
   return (
@@ -80,7 +98,9 @@ function AppRoutes() {
         path="/terms"
         element={
           <div className="min-h-screen px-4 py-8">
-            <Terms />
+            <Lazy>
+              <Terms />
+            </Lazy>
           </div>
         }
       />
@@ -92,28 +112,30 @@ function AppRoutes() {
         }
       >
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/inventory" element={<Inventory />} />
-        <Route path="/transactions" element={<TransactionHistory />} />
-        <Route path="/prescriptions" element={<Prescriptions />} />
-        <Route path="/reconciliation" element={<Reconciliation />} />
+        <Route path="/inventory" element={<Lazy><Inventory /></Lazy>} />
+        <Route path="/transactions" element={<Lazy><TransactionHistory /></Lazy>} />
+        <Route path="/prescriptions" element={<Lazy><Prescriptions /></Lazy>} />
+        <Route path="/reconciliation" element={<Lazy><Reconciliation /></Lazy>} />
         <Route
           path="/reports"
           element={
-            <Suspense fallback={<FullPageSpinner />}>
+            <Lazy>
               <Reports />
-            </Suspense>
+            </Lazy>
           }
         />
-        <Route path="/upload-file" element={<UploadFile />} />
-        <Route path="/purchase-records" element={<PurchaseRecords />} />
-        <Route path="/dispensing-records" element={<DispensingRecords />} />
-        <Route path="/destruction-records" element={<DestructionRecords />} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/upload-file" element={<Lazy><UploadFile /></Lazy>} />
+        <Route path="/purchase-records" element={<Lazy><PurchaseRecords /></Lazy>} />
+        <Route path="/dispensing-records" element={<Lazy><DispensingRecords /></Lazy>} />
+        <Route path="/destruction-records" element={<Lazy><DestructionRecords /></Lazy>} />
+        <Route path="/settings" element={<Lazy><Settings /></Lazy>} />
         <Route
           path="/admin"
           element={
             <AdminRoute>
-              <Admin />
+              <Lazy>
+                <Admin />
+              </Lazy>
             </AdminRoute>
           }
         />
@@ -137,6 +159,7 @@ function AppWithPaywall() {
 export default function App() {
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
+      <MotionProvider>
       <AuthProvider>
         <ConfirmProvider>
           <BrowserRouter>
@@ -161,6 +184,7 @@ export default function App() {
           <CookieConsent />
         </ConfirmProvider>
       </AuthProvider>
+      </MotionProvider>
     </ErrorBoundary>
   );
 }

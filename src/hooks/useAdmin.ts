@@ -32,11 +32,20 @@ async function fetchSystemSettings(): Promise<SystemSettings> {
   return data;
 }
 
+interface AdminUserRow {
+  id: string;
+  email: string;
+  role: AdminUser['role'];
+  subscription_status: string | null;
+  trial_ends_at: string | null;
+  created_at: string;
+}
+
 async function fetchAdminUsers(): Promise<AdminUser[]> {
   const { data, error } = await supabase.rpc('admin_list_users');
   if (error) throw error;
 
-  return (data ?? []).map((user) => ({
+  return ((data ?? []) as AdminUserRow[]).map((user) => ({
     id: user.id,
     email: user.email,
     role: user.role,

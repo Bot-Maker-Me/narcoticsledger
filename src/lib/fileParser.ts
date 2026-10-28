@@ -1,4 +1,6 @@
-import Papa from 'papaparse';
+import { readFileRows, type ParsedRow } from '@/lib/readRows';
+import { isSupportedFile } from '@/lib/uploadValidation';
+import { reportError } from '@/lib/errors';
 import { normalizeDin } from '@/lib/din';
 import { fetchReferenceEntries } from '@/lib/dinReference';
 import type { ParsedDinData } from '@/types/reconciliation';
@@ -32,47 +34,21 @@ export interface ParsedIndividualRow {
  */
 export type PackSizeResolver = (din: string) => number | null;
 
-interface ParsedRow {
-  [key: string]: unknown;
-}
+export { isSupportedFile };
 
-const FILE_EXTENSIONS = ['.csv', '.xlsx', '.xls'] as const;
-
-/** True when a file name ends in one of the supported spreadsheet extensions. */
-export function isSupportedFile(file: File): boolean {
-  const ext = `.${file.name.split('.').pop()?.toLowerCase() ?? ''}`;
-  return (FILE_EXTENSIONS as readonly string[]).includes(ext);
-}
+/** Reads a CSV/Excel file into plain row objects (off the main thread, cached per file). */
+const readRows = readFileRows;
 
 /**
- * Reads a CSV/Excel file into plain row objects.
- *
- * `xlsx` is loaded on demand: it is a large dependency that is only needed once the user
- * actually uploads a workbook, so it stays out of the initial bundle.
+ * Starts reading the given files and resolving their DINs against the CDSA reference in
+ * the background. Call it as soon as files are dropped: by the time the user presses
+ * "Process" every row is already in memory and the reference is cached, so parsing is
+ * effectively instant. Errors are left for the real parse to report.
  */
-async function readRows(file: File): Promise<ParsedRow[]> {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-
-  if (ext === 'csv' || ext === 'txt') {
-    return new Promise<ParsedRow[]>((resolve, reject) => {
-      Papa.parse<ParsedRow>(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => resolve(results.data),
-        error: (err) => reject(new Error(`Failed to parse CSV: ${err.message}`)),
-      });
-    });
-  }
-
-  if (ext === 'xlsx' || ext === 'xls') {
-    const XLSX = await import('xlsx');
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    return XLSX.utils.sheet_to_json<ParsedRow>(sheet, { defval: '' });
-  }
-
-  throw new Error(`Unsupported file format: .${ext}. Please upload .csv or .xlsx files.`);
+export async function prepareFiles(files: File[]): Promise<void> {
+  const rowSets = await Promise.all(files.map((file) => readFileRows(file)));
+  const dins = rowSets.flatMap((rows) => collectDins(rows));
+  await lookupReference(dins);
 }
 
 function createFilePreview(file: File, rows: ParsedRow[], uniqueDINs: number): FilePreview {
@@ -330,17 +306,23 @@ function resolveColumns(rows: ParsedRow[], source: 'mckesson' | 'kroll'): RowCol
  * Resolves the server-side CDSA/DPD reference for every DIN in the file before the rows
  * are aggregated, so drug names, schedules and pack sizes are available while parsing.
  */
-async function prefetchDinReference(rows: ParsedRow[]): Promise<void> {
-  if (rows.length === 0) return;
-
+function collectDins(rows: ParsedRow[]): string[] {
+  if (rows.length === 0) return [];
   const dinKey = findColumnKey(Object.keys(rows[0]), DIN_COLUMNS);
-  if (!dinKey) return;
+  return dinKey ? rows.map((row) => String(row[dinKey] ?? '')) : [];
+}
 
+async function lookupReference(dins: string[]): Promise<void> {
+  if (dins.length === 0) return;
   try {
-    await fetchReferenceEntries(rows.map((row) => String(row[dinKey] ?? '')));
+    await fetchReferenceEntries(dins);
   } catch (error) {
-    console.error('[file-parser] DIN reference lookup failed:', error);
+    reportError(error, { scope: 'din-reference' });
   }
+}
+
+async function prefetchDinReference(rows: ParsedRow[]): Promise<void> {
+  await lookupReference(collectDins(rows));
 }
 
 /** Aggregates a file's rows into one entry per DIN (used by reconciliation imports). */

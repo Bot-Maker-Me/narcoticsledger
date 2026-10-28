@@ -1,114 +1,115 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { formatDate } from '@/lib/dates';
+import { reportError } from '@/lib/errors';
+import { DraftSaver, type DraftStatus } from '@/lib/draftSaver';
+import { toItemPayload, type ReconciliationItemPayload } from '@/lib/reconciliationPayload';
 import type { ReconciliationItemDraft } from '@/types/reconciliation';
 
-const AUTOSAVE_INTERVAL_MS = 30_000;
+/** Quiet time after the last edit before the draft is written. */
+const AUTOSAVE_DEBOUNCE_MS = 1500;
 
 interface DraftOptions {
   items: ReconciliationItemDraft[];
-  /** Only autosave once there is parsed data the user would hate to lose. */
+  /** Only save once there is parsed data the user would hate to lose. */
   enabled: boolean;
-  /** The draft cycle already created for this session, if any. */
-  draftId: string | null;
-  onDraftCreated: (cycleId: string) => void;
-}
-
-function toRows(items: ReconciliationItemDraft[], cycleId: string, userId: string) {
-  return items.map((item) => ({
-    cycle_id: cycleId,
-    user_id: userId,
-    drug_id: item.drug_id,
-    din: item.din,
-    description: item.description,
-    schedule: item.schedule,
-    opening_balance: item.opening_balance,
-    purchased_count: item.purchased_count,
-    dispensed_count: item.dispensed_count,
-    actual_count: item.actual_count,
-    flag: item.flag,
-    verify_note: item.verify_note,
-    locations: item.locations,
-  }));
 }
 
 /**
- * Periodically parks the in-progress reconciliation in the database so a closed tab does
- * not lose a count, and warns before the tab is closed while work is unsaved.
+ * Keeps the in-progress reconciliation in the database so a closed tab or a crash never
+ * loses a count.
  *
- * The latest items are held in a ref, so the interval is not torn down and restarted on
- * every keystroke (which previously meant the autosave could never actually fire while
- * the user was typing).
+ * - The first snapshot is saved immediately (the draft exists the moment the files are
+ *   processed); later edits are debounced, and only sent when something that is actually
+ *   stored has changed.
+ * - Each save goes through `save_reconciliation_draft`: one atomic, audited call that
+ *   replaces the draft's rows in place. (The previous interval timer re-inserted every row
+ *   on each tick, which is how a 164-DIN draft grew to 2,132 rows.)
+ * - The browser's "leave this page?" prompt only appears while something is unsaved.
  */
-export function useReconciliationDraft({ items, enabled, draftId, onDraftCreated }: DraftOptions) {
-  const itemsRef = useRef(items);
-  const draftIdRef = useRef(draftId);
-  const onCreatedRef = useRef(onDraftCreated);
+export function useReconciliationDraft({ items, enabled }: DraftOptions) {
+  const [status, setStatus] = useState<DraftStatus>('idle');
+  const draftIdRef = useRef<string | null>(null);
+  const latestRef = useRef<{ key: string; payload: ReconciliationItemPayload[] } | null>(null);
 
-  itemsRef.current = items;
-  draftIdRef.current = draftId;
-  onCreatedRef.current = onDraftCreated;
+  const saver = useMemo(
+    () =>
+      new DraftSaver<ReconciliationItemPayload[]>({
+        debounceMs: AUTOSAVE_DEBOUNCE_MS,
+        onStatus: setStatus,
+        onError: (error) => reportError(error, { scope: 'reconciliation-draft' }),
+        save: async (payload) => {
+          const { data, error } = await supabase.rpc('save_reconciliation_draft', {
+            p_cycle_id: draftIdRef.current,
+            p_items: payload,
+          });
+          if (error) throw error;
+          draftIdRef.current = data as string;
+        },
+      }),
+    []
+  );
+
+  const snapshot = useMemo(() => {
+    if (!enabled || items.length === 0) return null;
+    const payload = toItemPayload(items);
+    return { key: JSON.stringify(payload), payload };
+  }, [items, enabled]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!snapshot) return;
+    latestRef.current = snapshot;
+    saver.submit(snapshot.key, snapshot.payload, draftIdRef.current === null);
+  }, [snapshot, saver]);
 
-    const saveDraft = async () => {
-      const currentItems = itemsRef.current;
-      if (currentItems.length === 0) return;
-
-      try {
-        const { data } = await supabase.auth.getUser();
-        const userId = data.user?.id;
-        if (!userId) return;
-
-        if (draftIdRef.current) {
-          const { error } = await supabase
-            .from('reconciliation_items')
-            .upsert(toRows(currentItems, draftIdRef.current, userId));
-          if (error) console.error('[reconciliation] draft autosave failed:', error);
-          return;
-        }
-
-        const { data: cycle, error: cycleError } = await supabase
-          .from('reconciliation_cycles')
-          .insert({
-            user_id: userId,
-            status: 'draft',
-            name: `Draft - ${formatDate(new Date())}`,
-            start_date: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (cycleError) {
-          console.error('[reconciliation] could not create draft cycle:', cycleError);
-          return;
-        }
-
-        onCreatedRef.current(cycle.id);
-
-        const { error: itemsError } = await supabase
-          .from('reconciliation_items')
-          .insert(toRows(currentItems, cycle.id, userId));
-        if (itemsError) console.error('[reconciliation] could not save draft items:', itemsError);
-      } catch (error) {
-        console.error('[reconciliation] draft autosave failed:', error);
-      }
+  // Write straight away when the tab is hidden or the user navigates inside the app.
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') void saver.flush();
     };
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    window.addEventListener('pagehide', flushWhenHidden);
 
-    const interval = setInterval(saveDraft, AUTOSAVE_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [enabled]);
+    return () => {
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+      window.removeEventListener('pagehide', flushWhenHidden);
+      void saver.flush();
+      saver.dispose();
+    };
+  }, [saver]);
 
+  // Warn before closing the tab only while there is something unsaved.
+  const unsaved = status === 'dirty' || status === 'saving' || status === 'error';
   useEffect(() => {
-    if (!enabled) return;
-
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+    if (!unsaved) return;
+    const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [unsaved]);
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [enabled]);
+  /**
+   * Stops autosaving, waits for a save that is already in flight and returns the draft's
+   * id, so the explicit "Save Cycle" promotes this draft instead of creating a second one.
+   */
+  const settle = useCallback(async (): Promise<string | null> => {
+    await saver.cancelAndSettle();
+    return draftIdRef.current;
+  }, [saver]);
+
+  /** Resumes autosaving after an explicit save failed. */
+  const resume = useCallback(() => {
+    const latest = latestRef.current;
+    if (latest) saver.submit(`${latest.key}#resume`, latest.payload, true);
+  }, [saver]);
+
+  /** A new import replaces the draft wholesale: forget the old draft entirely. */
+  const reset = useCallback(() => {
+    saver.reset();
+    draftIdRef.current = null;
+    latestRef.current = null;
+  }, [saver]);
+
+  return { status, settle, resume, reset };
 }

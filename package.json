@@ -14,6 +14,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
     "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-virtual": "^3.14.23",
     "@tippyjs/react": "^4.2.6",
     "framer-motion": "^13.2.0",
     "jspdf": "^4.2.1",

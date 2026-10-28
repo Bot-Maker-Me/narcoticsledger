@@ -21,7 +21,7 @@ import { formatWeekdayLong } from '@/lib/dates';
 import toast from 'react-hot-toast';
 import GlobalDrugSearch from '@/components/GlobalDrugSearch';
 import ErrorBoundary from '@/components/ErrorBoundary';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/motion';
 
 const baseNavItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
