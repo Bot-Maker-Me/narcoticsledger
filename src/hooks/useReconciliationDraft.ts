@@ -30,6 +30,9 @@ export function useReconciliationDraft({ items, enabled }: DraftOptions) {
   const [status, setStatus] = useState<DraftStatus>('idle');
   const draftIdRef = useRef<string | null>(null);
   const latestRef = useRef<{ key: string; payload: ReconciliationItemPayload[] } | null>(null);
+  // Bumped whenever the draft is forgotten, so a write that is still in flight cannot
+  // resurrect a draft id that a newer cycle (or import) has already replaced.
+  const saveTokenRef = useRef(0);
 
   const saver = useMemo(
     () =>
@@ -38,12 +41,13 @@ export function useReconciliationDraft({ items, enabled }: DraftOptions) {
         onStatus: setStatus,
         onError: (error) => reportError(error, { scope: 'reconciliation-draft' }),
         save: async (payload) => {
+          const token = saveTokenRef.current;
           const { data, error } = await supabase.rpc('save_reconciliation_draft', {
             p_cycle_id: draftIdRef.current,
             p_items: payload,
           });
           if (error) throw error;
-          draftIdRef.current = data as string;
+          if (token === saveTokenRef.current) draftIdRef.current = data as string;
         },
       }),
     []
@@ -90,10 +94,19 @@ export function useReconciliationDraft({ items, enabled }: DraftOptions) {
   }, [unsaved]);
 
   /**
-   * Stops autosaving, waits for a save that is already in flight and returns the draft's
-   * id, so the explicit "Save Cycle" promotes this draft instead of creating a second one.
+   * Stops autosaving and returns the draft's id, so the explicit "Save Cycle" promotes this
+   * draft instead of creating a second one.
+   *
+   * A draft write that is already in flight is only waited for when the id is still unknown:
+   * once the draft exists, its id is all the explicit save needs, and waiting for a write
+   * that the cycle save is about to overwrite cost an extra round trip on every Save Cycle.
    */
   const settle = useCallback(async (): Promise<string | null> => {
+    if (draftIdRef.current !== null) {
+      void saver.cancelAndSettle();
+      return draftIdRef.current;
+    }
+
     await saver.cancelAndSettle();
     return draftIdRef.current;
   }, [saver]);
@@ -106,6 +119,7 @@ export function useReconciliationDraft({ items, enabled }: DraftOptions) {
 
   /** A new import replaces the draft wholesale: forget the old draft entirely. */
   const reset = useCallback(() => {
+    saveTokenRef.current += 1;
     saver.reset();
     draftIdRef.current = null;
     latestRef.current = null;

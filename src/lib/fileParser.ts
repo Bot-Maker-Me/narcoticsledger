@@ -34,6 +34,25 @@ export interface ParsedIndividualRow {
  */
 export type PackSizeResolver = (din: string) => number | null;
 
+/**
+ * Rows a parse could not turn into a transaction, and why. Reported so a screen can show
+ * what the file contained but the ledger did not receive, instead of a bare row count.
+ */
+export interface SkippedRows {
+  /** The DIN cell held no digits, so no drug could be matched to the row. */
+  noDin: number;
+  /** A row that repeats one already read from the same batch of files. */
+  duplicates: number;
+}
+
+/** A one-line reason list for the rows a parse skipped, e.g. "2 rows with no DIN". */
+export function describeSkippedRows(skipped: SkippedRows): string {
+  const parts: string[] = [];
+  if (skipped.noDin > 0) parts.push(`${skipped.noDin} with no DIN in the DIN column`);
+  if (skipped.duplicates > 0) parts.push(`${skipped.duplicates} repeating a row already in the file`);
+  return parts.join(', ');
+}
+
 export { isSupportedFile };
 
 /** Reads a CSV/Excel file into plain row objects (off the main thread, cached per file). */
@@ -419,22 +438,29 @@ function parseIndividualRows(
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
-): ParsedIndividualRow[] {
-  if (rows.length === 0) return [];
+): { rows: ParsedIndividualRow[]; skipped: SkippedRows } {
+  if (rows.length === 0) return { rows: [], skipped: { noDin: 0, duplicates: 0 } };
 
   const { dinKey, qtyKey, typeKey, dateKey, descKey, packSizeKey } = resolveColumns(rows, source);
   const result: ParsedIndividualRow[] = [];
+  const skipped: SkippedRows = { noDin: 0, duplicates: 0 };
 
   for (const row of rows) {
     const din = normalizeDin(row[dinKey]);
-    if (!din) continue;
+    if (!din) {
+      skipped.noDin += 1;
+      continue;
+    }
 
     let qty = qtyKey ? extractNumber(row[qtyKey]) : 1;
     const date = dateKey ? extractDate(row[dateKey]) : null;
 
     if (seenSignatures) {
       const signature = generateRowSignature(din, qty, date, row);
-      if (seenSignatures.has(signature)) continue;
+      if (seenSignatures.has(signature)) {
+        skipped.duplicates += 1;
+        continue;
+      }
       seenSignatures.add(signature);
     }
 
@@ -455,7 +481,7 @@ function parseIndividualRows(
     result.push(entry);
   }
 
-  return result;
+  return { rows: result, skipped };
 }
 
 /** Parses one file into a DIN map plus a preview of what was found. */
@@ -478,12 +504,12 @@ export async function parseSingleFileWithIndividualRows(
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
-): Promise<{ data: ParsedIndividualRow[]; preview: FilePreview }> {
+): Promise<{ data: ParsedIndividualRow[]; preview: FilePreview; skipped: SkippedRows }> {
   const rows = await readRows(file);
   await prefetchDinReference(rows);
 
-  const data = parseIndividualRows(rows, source, seenSignatures, packSizeFor);
-  return { data, preview: createFilePreview(file, rows, data.length) };
+  const { rows: data, skipped } = parseIndividualRows(rows, source, seenSignatures, packSizeFor);
+  return { data, preview: createFilePreview(file, rows, data.length), skipped };
 }
 
 /** Merges the purchase and dispensing DIN maps, matching DINs across padding styles. */

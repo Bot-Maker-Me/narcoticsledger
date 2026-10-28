@@ -13,6 +13,7 @@ import { useDrugs } from '@/hooks/useDrugs';
 import { useFileList } from '@/hooks/useFileList';
 import { useDeleteImportedFile } from '@/hooks/useDeleteImportedFile';
 import {
+  describeSkipped,
   useImportedRecords,
   useSaveImportedRecords,
   type ImportKind,
@@ -103,13 +104,16 @@ export default function RecordImportPage({ kind }: { kind: ImportKind }) {
     try {
       const fileName = files[0]?.name;
       const result = await saveMutation.mutateAsync({ records, fileName });
+      const reason = describeSkipped(result);
 
       if (result.errors.length > 0) {
         toast.error(
-          `Saved ${result.saved} records, ${result.skipped} failed. Some drugs may already exist in inventory.`
+          `Saved ${result.saved} records · ${result.skipped} not saved (${reason}). ${result.errors[0]}`
         );
+      } else if (result.skipped > 0) {
+        toast.success(`Saved ${result.saved} records · ${result.skipped} not saved (${reason})`);
       } else {
-        toast.success(`Saved ${result.saved} records${result.skipped ? ` (${result.skipped} skipped)` : ''}`);
+        toast.success(`Saved ${result.saved} records`);
       }
 
       resetUpload();

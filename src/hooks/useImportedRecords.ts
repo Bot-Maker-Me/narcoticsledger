@@ -26,10 +26,24 @@ export interface ImportedRecordRow {
   file_name?: string;
 }
 
-interface SaveResult {
+export interface SaveResult {
   saved: number;
   skipped: number;
+  /** Why rows never reached the database, so a screen can say more than "N skipped". */
+  notSent: { noDin: number; noQuantity: number };
   errors: string[];
+}
+
+/** A one-line reason list for the rows a save left out, e.g. "312 with no quantity". */
+export function describeSkipped(result: SaveResult): string {
+  const parts: string[] = [];
+  if (result.notSent.noDin > 0) parts.push(`${result.notSent.noDin} with no DIN`);
+  if (result.notSent.noQuantity > 0) parts.push(`${result.notSent.noQuantity} with no quantity`);
+
+  const rejected = result.skipped - result.notSent.noDin - result.notSent.noQuantity;
+  if (rejected > 0) parts.push(`${rejected} rejected by the ledger`);
+
+  return parts.join(', ');
 }
 
 /** How each import kind is written to the ledger. */
@@ -102,7 +116,12 @@ async function persistTransactions(
     return { din, description, schedule, quantity: String(row.quantity), date: row.date };
   });
 
-  const result: SaveResult = { saved: 0, skipped: 0, errors: [] };
+  const result: SaveResult = {
+    saved: 0,
+    skipped: 0,
+    notSent: { noDin: 0, noQuantity: 0 },
+    errors: [],
+  };
 
   for (let start = 0; start < rows.length; start += IMPORT_CHUNK_SIZE) {
     const { data, error } = await supabase.rpc('import_ledger_rows', {
@@ -146,7 +165,16 @@ async function saveImportedRecords({
     fileName
   );
 
-  return { ...result, skipped: result.skipped + invalidCount };
+  return {
+    ...result,
+    skipped: result.skipped + invalidCount,
+    notSent: {
+      noDin: result.notSent.noDin + records.filter((record) => !record.din).length,
+      noQuantity:
+        result.notSent.noQuantity +
+        records.filter((record) => record.din && quantityForKind(kind, record) <= 0).length,
+    },
+  };
 }
 
 /** Per-row import: one ledger row per reported transaction. */
@@ -173,11 +201,21 @@ async function saveImportedIndividualRows({
     fileName
   );
 
-  return { ...result, skipped: result.skipped + invalidCount };
+  return {
+    ...result,
+    skipped: result.skipped + invalidCount,
+    notSent: {
+      noDin: result.notSent.noDin + rows.filter((row) => !row.din).length,
+      noQuantity: result.notSent.noQuantity + rows.filter((row) => row.din && row.quantity <= 0).length,
+    },
+  };
 }
 
 /** The API returns at most this many rows per request, so the ledger is paged through. */
 const FETCH_PAGE_SIZE = 1000;
+
+/** How many of those pages are read at once. */
+const PAGES_IN_FLIGHT = 6;
 
 interface ImportedRow {
   id: string;
@@ -188,27 +226,47 @@ interface ImportedRow {
   drugs: { din: string; description: string } | null;
 }
 
+/** One page of the ledger, newest first. */
+async function fetchLedgerPage(kind: ImportKind, page: number): Promise<ImportedRow[]> {
+  const config = KIND_CONFIG[kind];
+  const from = page * FETCH_PAGE_SIZE;
+
+  const { data, error } = await supabase
+    .from('inventory_transactions')
+    .select('id, quantity, created_at, date, file_name, drugs!inner(din, description)')
+    .eq('transaction_type', config.type)
+    .is('voided_at', null)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: true })
+    .range(from, from + FETCH_PAGE_SIZE - 1);
+
+  if (error) throw error;
+  return (data ?? []) as unknown as ImportedRow[];
+}
+
 async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow[]> {
   const config = KIND_CONFIG[kind];
   const rows: ImportedRow[] = [];
 
   // A single request only returns the first page, which silently dropped older records
-  // and made the monthly totals short, so keep paging to the end.
-  for (let from = 0; ; from += FETCH_PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from('inventory_transactions')
-      .select('id, quantity, created_at, date, file_name, drugs!inner(din, description)')
-      .eq('transaction_type', config.type)
-      .is('voided_at', null)
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: true })
-      .range(from, from + FETCH_PAGE_SIZE - 1);
+  // and made the monthly totals short, so keep paging to the end. The first page doubles
+  // as a probe: only a full page means there is more to read.
+  const first = await fetchLedgerPage(kind, 0);
+  rows.push(...first);
 
-    if (error) throw error;
+  if (first.length === FETCH_PAGE_SIZE) {
+    // The remaining pages are read a batch at a time. One at a time, a 42,000-row ledger
+    // is 42 round trips of ~0.5 s each, which left the screen loading for ~20 seconds.
+    for (let page = 1; ; page += PAGES_IN_FLIGHT) {
+      const batch = await Promise.all(
+        Array.from({ length: PAGES_IN_FLIGHT }, (_, offset) => fetchLedgerPage(kind, page + offset))
+      );
 
-    const page = (data ?? []) as unknown as ImportedRow[];
-    rows.push(...page);
-    if (page.length < FETCH_PAGE_SIZE) break;
+      for (const pageRows of batch) rows.push(...pageRows);
+
+      // The ledger ends at the first short page, so any pages after it came back empty.
+      if (batch.some((pageRows) => pageRows.length < FETCH_PAGE_SIZE)) break;
+    }
   }
 
   return rows.map((row) => ({
