@@ -35,6 +35,24 @@ const MIME_BY_KIND: Record<UploadKind, readonly string[]> = {
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // .xlsx is a ZIP container
 const OLE2_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]; // legacy .xls
 
+/** Signatures of files that are definitely not text, whatever their name says. */
+const BINARY_MAGIC: readonly (readonly number[])[] = [
+  [0x4d, 0x5a], // Windows executable (MZ)
+  [0x7f, 0x45, 0x4c, 0x46], // ELF
+  [0x50, 0x4b, 0x03, 0x04], // ZIP / xlsx / docx renamed to .csv
+  [0xd0, 0xcf, 0x11, 0xe0], // OLE2 / xls renamed to .csv
+  [0x25, 0x50, 0x44, 0x46], // PDF
+  [0x89, 0x50, 0x4e, 0x47], // PNG
+  [0xff, 0xd8, 0xff], // JPEG
+  [0x47, 0x49, 0x46, 0x38], // GIF
+];
+const UTF16_BOMS: readonly (readonly number[])[] = [
+  [0xff, 0xfe],
+  [0xfe, 0xff],
+];
+/** Above this share of NUL bytes a file without a UTF-16 BOM is treated as binary. */
+const MAX_NUL_RATIO = 0.3;
+
 export const ACCEPT_ATTRIBUTE = '.csv,.xlsx,.xls';
 export const SUPPORTED_FORMATS_LABEL = '.csv, .xlsx, or .xls';
 
@@ -82,9 +100,14 @@ export async function validateUpload(file: File): Promise<ValidationResult> {
   if (kind === 'xls' && !startsWith(head, OLE2_MAGIC)) {
     return { ok: false, reason: `"${file.name}" is not a valid .xls workbook` };
   }
-  // A text export never contains NUL bytes; their presence means a binary file was renamed.
-  if (kind === 'csv' && head.includes(0)) {
-    return { ok: false, reason: `"${file.name}" is not a text CSV file` };
+  // Kroll exports put stray NUL bytes inside quoted empty fields ("\0"), so a few NULs are
+  // normal. A renamed binary is recognised by its signature or by being mostly NULs.
+  if (kind === 'csv') {
+    const isUtf16 = UTF16_BOMS.some((magic) => startsWith(head, magic));
+    const nulRatio = head.length === 0 ? 0 : head.reduce((n, byte) => n + (byte === 0 ? 1 : 0), 0) / head.length;
+    if (BINARY_MAGIC.some((magic) => startsWith(head, magic)) || (!isUtf16 && nulRatio > MAX_NUL_RATIO)) {
+      return { ok: false, reason: `"${file.name}" is not a text CSV file` };
+    }
   }
 
   return { ok: true, kind };

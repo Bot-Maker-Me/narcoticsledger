@@ -11,6 +11,19 @@ describe('parseRowsCore', () => {
     ]);
   });
 
+  it('strips Kroll NUL bytes so empty fields stay empty', async () => {
+    const csv = new File(['Rx,Qty,DIN,Lot\r\n1,3,00655759,"\0"\r\n'], 'kroll.csv');
+    expect(await parseRowsCore(csv)).toEqual([{ Rx: '1', Qty: '3', DIN: '00655759', Lot: '' }]);
+  });
+
+  it('decodes a UTF-16 CSV', async () => {
+    const text = 'DIN,Qty\r\n00012345,5\r\n';
+    const bytes = new Uint8Array(2 + text.length * 2);
+    bytes.set([0xff, 0xfe]);
+    for (let i = 0; i < text.length; i++) bytes[2 + i * 2] = text.charCodeAt(i);
+    expect(await parseRowsCore(new File([bytes], 'u16.csv'))).toEqual([{ DIN: '00012345', Qty: '5' }]);
+  });
+
   it('reads the first worksheet of an xlsx workbook', async () => {
     const XLSX = await import('xlsx');
     const sheet = XLSX.utils.aoa_to_sheet([
