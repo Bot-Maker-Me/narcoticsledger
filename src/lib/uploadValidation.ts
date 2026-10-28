@@ -3,8 +3,8 @@
  *
  * A file name or a browser-reported MIME type is just a claim, so each file is checked on
  * four independent things before it is handed to a parser: extension, MIME type, size and
- * the file's first bytes ("magic numbers"). A renamed executable or HTML page fails the
- * last one even when the first three are forged.
+ * the file's first bytes ("magic numbers"). A renamed executable, archive or workbook
+ * fails the last one even when the first three are forged.
  */
 
 export type UploadKind = 'csv' | 'xlsx' | 'xls';
@@ -34,6 +34,21 @@ const MIME_BY_KIND: Record<UploadKind, readonly string[]> = {
 
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // .xlsx is a ZIP container
 const OLE2_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]; // legacy .xls
+
+/** Containers and executables a CSV is sometimes renamed from. */
+const BINARY_MAGIC: readonly (readonly number[])[] = [
+  [0x4d, 0x5a], // MZ - DOS/Windows executable
+  [0x7f, 0x45, 0x4c, 0x46], // ELF
+  [0x89, 0x50, 0x4e, 0x47], // PNG
+  [0xff, 0xd8, 0xff], // JPEG
+  [0x47, 0x49, 0x46, 0x38], // GIF
+  [0x25, 0x50, 0x44, 0x46], // PDF
+  [0x1f, 0x8b], // gzip
+  [0x52, 0x61, 0x72, 0x21], // RAR
+  [0x37, 0x7a, 0xbc, 0xaf], // 7z
+  ZIP_MAGIC,
+  OLE2_MAGIC,
+];
 
 export const ACCEPT_ATTRIBUTE = '.csv,.xlsx,.xls';
 export const SUPPORTED_FORMATS_LABEL = '.csv, .xlsx, or .xls';
@@ -82,8 +97,17 @@ export async function validateUpload(file: File): Promise<ValidationResult> {
   if (kind === 'xls' && !startsWith(head, OLE2_MAGIC)) {
     return { ok: false, reason: `"${file.name}" is not a valid .xls workbook` };
   }
-  // A text export never contains NUL bytes; their presence means a binary file was renamed.
-  if (kind === 'csv' && head.includes(0)) {
+  // A renamed workbook, archive or executable is caught by its signature.
+  //
+  // This test used to be "a text export never contains a NUL byte", which rejected genuine
+  // supplier files: Kroll writes a NUL placeholder into every empty column (about four per
+  // dispensing row), so a real "Disp Kroll ... .csv" failed as "not a text CSV file". A NUL
+  // in the opening bytes of the file is still proof of a binary blob, because no text export
+  // starts with one.
+  if (
+    kind === 'csv' &&
+    (BINARY_MAGIC.some((magic) => startsWith(head, magic)) || head.slice(0, 16).includes(0))
+  ) {
     return { ok: false, reason: `"${file.name}" is not a text CSV file` };
   }
 

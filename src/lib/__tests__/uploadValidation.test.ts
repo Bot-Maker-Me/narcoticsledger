@@ -20,6 +20,24 @@ describe('validateUpload', () => {
     expect((await validateUpload(file('a.csv', 'DIN,Qty\n1,2', 'text/csv'))).ok).toBe(true);
   });
 
+  // Regression: Kroll pads every empty column of its dispensing exports with a NUL
+  // placeholder ("\u0000", about four per row), so the old "a text export never contains a
+  // NUL byte" test rejected a genuine 40,000-row dispensing file as "not a text CSV file".
+  it('accepts a supplier export that pads empty columns with NUL placeholders', async () => {
+    const kroll =
+      'Pharmacy,Qty,DIN,Drug Name,Lot Numbers,Workflow Status\n' +
+      '3753,3,00655759,TAB Apo-Lorazepam 1mg,"\u0000","\u0000"\n' +
+      '3753,1,00405337,TAB Diazepam 10mg,"\u0000","\u0000"\n';
+    const result = await validateUpload(
+      file('Disp Kroll 2026-02-01 to 2026-03-31.csv', kroll, 'text/csv')
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('still rejects a binary blob renamed to .csv', async () => {
+    expect((await validateUpload(file('a.csv', [0x00, 0x01, 0x02, 0x03]))).ok).toBe(false);
+  });
+
   it('accepts real xlsx / xls signatures', async () => {
     expect((await validateUpload(file('a.xlsx', [0x50, 0x4b, 0x03, 0x04, 0, 0]))).ok).toBe(true);
     expect((await validateUpload(file('a.xls', [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))).ok).toBe(true);
