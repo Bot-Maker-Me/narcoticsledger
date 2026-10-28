@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { digitsOf, isValidDin } from '@/lib/din';
+import { digitsOf } from '@/lib/din';
 import { getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
 import { toLedgerDateString } from '@/lib/ledgerDate';
 import type { ParsedDinData } from '@/types/reconciliation';
@@ -66,124 +66,60 @@ function latestTransactionDate(record: ParsedDinData): string {
   return toLedgerDateString(latest.date);
 }
 
+/** Rows per request. A 10,000-row chunk is ~1 MB of JSON and one database transaction. */
+const IMPORT_CHUNK_SIZE = 10_000;
+
 /**
- * Resolves (or creates) this pharmacy's `drugs` row for a DIN and returns its id.
+ * Writes the rows through `import_ledger_rows`: ONE call per 10,000 rows that validates
+ * every row, creates any missing drug and inserts the ledger entries atomically, with an
+ * audit-log entry. (This used to be one lookup per DIN, then a batch insert, then a
+ * row-by-row retry loop - hundreds of round trips for a normal file.)
  *
- * Drug rows are per-user: DIN uniqueness is scoped to `(user_id, din)` and the drugs table
- * is only readable by its owner, so a DIN another pharmacy already imported is simply
- * created here rather than shared.
- */
-async function ensureDrugId(din: string, description?: string): Promise<string> {
-  const normalizedDin = digitsOf(din);
-
-  if (!isValidDin(normalizedDin)) {
-    throw new Error(`Invalid DIN format: ${din}. DIN must be 6-10 digits.`);
-  }
-
-  const { data: existing, error: lookupError } = await supabase
-    .from('drugs')
-    .select('id')
-    .eq('din', normalizedDin)
-    .limit(1);
-
-  if (lookupError) {
-    throw new Error(`Failed to lookup drug ${normalizedDin}: ${lookupError.message}`);
-  }
-  if (existing?.[0]?.id) return existing[0].id;
-
-  // Fall back to the CDSA/DPD reference for the product name and CDSA schedule.
-  const reference = getDinReferenceEntry(normalizedDin);
-
-  const { data: created, error: createError } = await supabase
-    .from('drugs')
-    .insert({
-      din: normalizedDin,
-      description:
-        description?.trim() || (reference ? referenceLabel(reference) : '') || `Imported DIN ${normalizedDin}`,
-      schedule: reference?.schedule ?? 'Verify',
-    })
-    .select('id')
-    .single();
-
-  if (createError) {
-    // A concurrent request may have created the same drug first.
-    if (createError.code === '23505' || createError.message.includes('duplicate key')) {
-      const { data: retryExisting, error: retryError } = await supabase
-        .from('drugs')
-        .select('id')
-        .eq('din', normalizedDin)
-        .limit(1);
-
-      if (retryError) {
-        throw new Error(`Failed to lookup drug ${normalizedDin} after duplicate: ${retryError.message}`);
-      }
-      if (retryExisting?.[0]?.id) return retryExisting[0].id;
-
-      throw new Error(`Drug ${normalizedDin} appears to exist but could not be found after duplicate error`);
-    }
-
-    throw new Error(`Failed to create drug ${normalizedDin}: ${createError.message}`);
-  }
-
-  return created.id;
-}
-
-/**
- * Resolves the drug for every DIN and writes the rows in one batch, falling back to
- * row-by-row inserts when a batch is rejected so one bad row cannot lose the whole file.
+ * The CDSA reference supplies the drug name and schedule for DINs the pharmacy has not
+ * seen before; it is already cached from the background parse that ran on upload.
  */
 async function persistTransactions(
   kind: ImportKind,
   pending: PendingTransaction[],
   fileName?: string
 ): Promise<SaveResult> {
-  const config = KIND_CONFIG[kind];
-  const errors: string[] = [];
-  const failedDins = new Set<string>();
+  const sentDescription = new Set<string>();
 
-  const drugIdMap = new Map<string, string>();
-  for (const din of new Set(pending.map((row) => row.din))) {
-    const description = pending.find((row) => row.din === din)?.description;
-    try {
-      drugIdMap.set(din, await ensureDrugId(din, description));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      errors.push(`DIN ${din}: ${message}`);
-      failedDins.add(din);
+  const rows = pending.map((row) => {
+    const din = digitsOf(row.din);
+    const first = !sentDescription.has(din);
+    sentDescription.add(din);
+
+    // Description and schedule only matter once per DIN (the server creates the drug once).
+    let description: string | undefined;
+    let schedule: string | undefined;
+    if (first) {
+      const reference = getDinReferenceEntry(din);
+      description = row.description?.trim() || (reference ? referenceLabel(reference) : '') || undefined;
+      schedule = reference?.schedule ?? undefined;
     }
+
+    return { din, description, schedule, quantity: String(row.quantity), date: row.date };
+  });
+
+  const result: SaveResult = { saved: 0, skipped: 0, errors: [] };
+
+  for (let start = 0; start < rows.length; start += IMPORT_CHUNK_SIZE) {
+    const { data, error } = await supabase.rpc('import_ledger_rows', {
+      p_kind: kind,
+      p_file_name: fileName ?? null,
+      p_rows: rows.slice(start, start + IMPORT_CHUNK_SIZE),
+    });
+
+    if (error) throw error;
+
+    const chunk = data as { saved: number; skipped: number; errors: string[] };
+    result.saved += chunk.saved;
+    result.skipped += chunk.skipped;
+    result.errors.push(...chunk.errors);
   }
 
-  const usable = pending.filter((row) => !failedDins.has(row.din));
-  const skipped = pending.length - usable.length;
-
-  if (usable.length === 0) return { saved: 0, skipped, errors };
-
-  const transactions = usable.map((row) => ({
-    drug_id: drugIdMap.get(row.din),
-    transaction_type: config.type,
-    quantity: config.type === 'PURCHASE' ? row.quantity : -row.quantity,
-    date: row.date,
-    file_name: fileName,
-  }));
-
-  const { error: batchError } = await supabase.from('inventory_transactions').insert(transactions);
-  if (!batchError) return { saved: transactions.length, skipped, errors };
-
-  console.error('[import] batch insert failed, retrying row by row:', batchError);
-
-  let saved = 0;
-  let failed = skipped;
-  for (const transaction of transactions) {
-    const { error: rowError } = await supabase.from('inventory_transactions').insert(transaction);
-    if (rowError) {
-      errors.push(`Transaction error: ${rowError.message}`);
-      failed += 1;
-    } else {
-      saved += 1;
-    }
-  }
-
-  return { saved, skipped: failed, errors };
+  return result;
 }
 
 /** Aggregated import: one ledger row per DIN (used by reconciliation-style imports). */
@@ -302,14 +238,10 @@ function useSaveMutation<T>(
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn,
-    onSuccess: (result) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['imported-records', kind] });
       queryClient.invalidateQueries({ queryKey: ['drugs'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
-
-      if (result.errors.length > 0) {
-        console.error('[import] some rows could not be saved:', result.errors);
-      }
     },
   });
 }

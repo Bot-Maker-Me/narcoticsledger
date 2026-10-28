@@ -103,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (healError) reportError(healError, { scope: 'ensure_my_profile' });
 
-      console.error('Could not load or create a profile for this account');
+      reportError(new Error('Could not load or create a profile for this account'), { scope: 'auth-profile' });
       setLoading(false);
     })();
 
@@ -129,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
     if (error) {
-      console.error('Signup error:', error);
+      reportError(error, { scope: 'signup' });
       throw error;
     }
 

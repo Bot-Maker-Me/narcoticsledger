@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { reportError } from '@/lib/errors';
 import { stockLevelsQuery } from '@/lib/stockLevels';
 import type { Prescription, PrescriptionFormData, PrescriptionWithDrug } from '@/types/prescription';
 
@@ -13,7 +14,7 @@ async function signImagePaths(paths: string[]): Promise<Map<string, string>> {
     .createSignedUrls(paths, 60 * 60);
 
   if (error) {
-    console.error('[prescriptions] failed to sign images:', error);
+    reportError(error, { scope: 'prescriptions-images' });
     return map;
   }
 

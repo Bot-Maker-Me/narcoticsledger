@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ChevronLeft,
   FileDown,
@@ -11,10 +12,11 @@ import {
   Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from '@/lib/motion';
 import { exportToCSV, exportToPDF } from '@/lib/exportUtils';
 import type { ReconciliationItemDraft, CycleFormData } from '@/types/reconciliation';
 import { flagStyles } from '@/components/reconciliation/shared';
+import type { DraftStatus } from '@/lib/draftSaver';
 
 export interface TableViewProps {
   items: ReconciliationItemDraft[];
@@ -24,6 +26,8 @@ export interface TableViewProps {
   onActualCountChange: (index: number, value: string) => void;
   onNoteChange: (index: number, value: string) => void;
   onSave: () => void;
+  /** Autosave state of the draft, shown next to the item count. */
+  draftStatus?: DraftStatus;
   onBack: () => void;
   saving: boolean;
   onSearchChange: (query: string) => void;
@@ -55,7 +59,51 @@ export interface TableViewProps {
   onEditBlur: () => void;
 }
 
+/** Above this many rows the table is windowed: only the rows on screen are rendered. */
+const VIRTUALIZE_ABOVE = 200;
+const ESTIMATED_ROW_HEIGHT = 49;
+
+const DRAFT_STATUS_TEXT: Record<DraftStatus, string> = {
+  idle: '',
+  dirty: 'Unsaved changes',
+  saving: 'Saving draft…',
+  saved: 'Draft saved',
+  error: 'Could not save draft - retrying',
+};
+
+function DraftStatusLabel({ status }: { status?: DraftStatus }) {
+  if (!status || status === 'idle') return null;
+  return (
+    <span
+      role="status"
+      className={`ml-2 ${status === 'error' ? 'text-error-600' : 'text-neutral-400'}`}
+    >
+      · {DRAFT_STATUS_TEXT[status]}
+    </span>
+  );
+}
+
 export function TableView(props: TableViewProps) {
+  const [bulkValue, setBulkValue] = useState('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const windowed = props.filteredItems.length > VIRTUALIZE_ABOVE;
+
+  const virtualizer = useVirtualizer({
+    count: windowed ? props.filteredItems.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: 12,
+  });
+  const virtualRows = windowed ? virtualizer.getVirtualItems() : [];
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const paddingBottom =
+    virtualRows.length > 0 ? virtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end : 0;
+
+  const rowsToRender = windowed
+    ? virtualRows.map((row) => ({ item: props.filteredItems[row.index], index: row.index }))
+    : props.filteredItems.map((item, index) => ({ item, index }));
+  const columnCount = props.bulkEditMode ? 13 : 12;
+
   const stats = useMemo(() => {
     let pending = 0, ok = 0, review = 0, verify = 0;
     for (const item of props.items) {
@@ -102,6 +150,7 @@ export function TableView(props: TableViewProps) {
           <h1 className="font-display text-3xl text-neutral-900">Reconciliation Table</h1>
           <p className="mt-1 text-sm text-neutral-500">
             {props.items.length} items · {progress}% counted
+            <DraftStatusLabel status={props.draftStatus} />
           </p>
         </div>
         <div className="mt-4 flex items-center gap-2 sm:mt-0">
@@ -191,11 +240,17 @@ export function TableView(props: TableViewProps) {
                   type="number"
                   placeholder="Set count"
                   className="input-field w-32"
-                  onChange={(e) => props.onBulkEdit(e.target.value ? parseInt(e.target.value) : null)}
+                  value={bulkValue}
+                  min={0}
+                  onChange={(e) => setBulkValue(e.target.value)}
                 />
                 <button
                   className="btn-primary text-xs"
-                  onClick={() => props.onBulkEdit(null)}
+                  onClick={() => {
+                    const parsed = parseInt(bulkValue, 10);
+                    props.onBulkEdit(bulkValue === '' || isNaN(parsed) || parsed < 0 ? null : parsed);
+                    setBulkValue('');
+                  }}
                   disabled={props.selectedCount === 0}
                 >
                   Apply
@@ -214,9 +269,9 @@ export function TableView(props: TableViewProps) {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
+        <div ref={scrollRef} className={windowed ? 'max-h-[70vh] overflow-auto' : 'overflow-x-auto'}>
           <table className="w-full">
-            <thead>
+            <thead className={windowed ? 'sticky top-0 z-10 bg-neutral-50' : undefined}>
               <tr className="border-b border-neutral-100 bg-neutral-50/50">
                 {props.bulkEditMode && (
                   <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-neutral-500 w-10">
@@ -248,7 +303,12 @@ export function TableView(props: TableViewProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-50">
-              {props.filteredItems.map((item, index) => {
+              {windowed && paddingTop > 0 && (
+                <tr aria-hidden="true">
+                  <td colSpan={columnCount} style={{ height: paddingTop, padding: 0 }} />
+                </tr>
+              )}
+              {rowsToRender.map(({ item, index }) => {
                 const itemIndex = indexByDin.get(item.din) ?? index;
                 const total = item.opening_balance + item.purchased_count - item.dispensed_count;
                 const expected = total;
@@ -262,6 +322,8 @@ export function TableView(props: TableViewProps) {
                 return (
                   <tr
                     key={item.din}
+                    ref={windowed ? virtualizer.measureElement : undefined}
+                    data-index={windowed ? index : undefined}
                     className={`transition-colors hover:bg-neutral-50/50 ${
                       hasVariance ? 'bg-warning-50/30' : ''
                     } ${
@@ -414,6 +476,11 @@ export function TableView(props: TableViewProps) {
                   </tr>
                 );
               })}
+              {windowed && paddingBottom > 0 && (
+                <tr aria-hidden="true">
+                  <td colSpan={columnCount} style={{ height: paddingBottom, padding: 0 }} />
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

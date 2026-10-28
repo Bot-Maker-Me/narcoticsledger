@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { toItemPayload } from '@/lib/reconciliationPayload';
 import type {
   ReconciliationCycle,
   ReconciliationItem,
@@ -51,57 +52,28 @@ async function fetchAllItems(): Promise<ReconciliationItemWithCycle[]> {
   });
 }
 
+/**
+ * Saves the cycle and its items in ONE atomic, audited call. When the user has been
+ * autosaving, `cycleId` is that draft's id and it is promoted in place - so there is never
+ * an orphaned draft left behind, and a failure cannot leave an empty cycle.
+ */
 async function createCycleWithItems({
   formData,
   items,
+  cycleId = null,
 }: {
   formData: CycleFormData;
   items: ReconciliationItemDraft[];
+  cycleId?: string | null;
 }): Promise<{ cycleId: string }> {
-  const { data: cycleData, error: cycleError } = await supabase
-    .from('reconciliation_cycles')
-    .insert({
-      start_date: formData.start_date || null,
-      end_date: formData.end_date || null,
-      performed_by: formData.performed_by || null,
-      verified_by: formData.verified_by || null,
-      notes: formData.notes || null,
-        status: 'in_progress',
-      checklist: formData.checklist ?? null,
-    })
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('save_reconciliation_cycle', {
+    p_cycle_id: cycleId,
+    p_form: formData,
+    p_items: toItemPayload(items),
+  });
 
-  if (cycleError) throw cycleError;
-
-  const cycleId = cycleData.id;
-
-  const itemRows = items.map((item) => ({
-    cycle_id: cycleId,
-    din: item.din,
-    drug_id: item.drug_id,
-    description: item.description,
-    schedule: item.schedule,
-    opening_balance: item.opening_balance,
-    purchased_count: item.purchased_count,
-    dispensed_count: item.dispensed_count,
-    actual_count: item.actual_count,
-    flag: item.flag,
-    verify_note: item.verify_note ?? null,
-    locations: item.locations ?? [],
-    suggested_adjustment:
-      item.actual_count === null
-        ? null
-        : item.actual_count - (item.opening_balance + item.purchased_count - item.dispensed_count),
-  }));
-
-  const { error: itemsError } = await supabase
-    .from('reconciliation_items')
-    .insert(itemRows);
-
-  if (itemsError) throw itemsError;
-
-  return { cycleId };
+  if (error) throw error;
+  return { cycleId: data as string };
 }
 
 async function updateActualCount({
@@ -157,7 +129,7 @@ async function completeCycle({
 }
 
 async function deleteCycle(id: string): Promise<void> {
-  const { error } = await supabase.from('reconciliation_cycles').delete().eq('id', id);
+  const { error } = await supabase.rpc('delete_reconciliation_cycle', { p_cycle_id: id });
   if (error) throw error;
 }
 
