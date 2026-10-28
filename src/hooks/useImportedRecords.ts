@@ -286,6 +286,11 @@ export function useImportedRecords(kind: ImportKind) {
     queryKey: ['imported-records', kind],
     queryFn: () => fetchImportedRecords(kind),
     enabled: kind === 'purchase' || kind === 'dispense' || kind === 'destruction',
+    // A month of dispensing records is 40+ paged requests. Without this, every visit to a
+    // record browser (and every remount of the upload screen) downloaded the whole ledger
+    // again. Imports and file deletions invalidate this key, so changes still show up at
+    // once; only plain navigation reuses what is already in the cache.
+    staleTime: 60_000,
   });
 }
 
