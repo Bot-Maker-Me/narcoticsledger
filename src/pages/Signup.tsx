@@ -4,7 +4,7 @@ import { useState, type FormEvent } from 'react';
 import toast from 'react-hot-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/motion';
 import SectionMarker from '@/components/SectionMarker';
 
 export default function Signup() {

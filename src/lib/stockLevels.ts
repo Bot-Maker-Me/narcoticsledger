@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { reportError } from '@/lib/errors';
 
 /**
  * React Query options for the per-drug stock map.
@@ -26,7 +27,7 @@ export async function fetchStockByDrugId(): Promise<Map<string, number>> {
     }
     return map;
   } catch (error) {
-    console.error('[stock] failed to fetch stock levels:', error);
+    reportError(error, { scope: 'stock-levels' });
     // The view may not exist in a fresh environment; treat stock as unknown rather than
     // failing the whole drugs query.
     return new Map();

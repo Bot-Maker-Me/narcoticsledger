@@ -15,7 +15,13 @@ import { useReconciliationDraft } from '@/hooks/useReconciliationDraft';
 import { useFileList } from '@/hooks/useFileList';
 import { useUndoableItems } from '@/hooks/useUndoableItems';
 import { useSavedCountFile } from '@/hooks/useSavedCountFile';
-import { deduplicateDinData, mergeDinData, parseSingleFileWithPreview, type FilePreview } from '@/lib/fileParser';
+import {
+  deduplicateDinData,
+  mergeDinData,
+  parseSingleFileWithPreview,
+  prepareFiles,
+  type FilePreview,
+} from '@/lib/fileParser';
 import { createPackSizeResolver, getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
 import { isSameDin } from '@/lib/din';
 import { supabase } from '@/lib/supabase';
@@ -81,7 +87,6 @@ export default function Reconciliation() {
   const [cycleForm, setCycleForm] = useState<CycleFormData>(EMPTY_CYCLE_FORM);
   const [activeCycleId, setActiveCycleId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [bulkEditMode, setBulkEditMode] = useState(false);
@@ -99,11 +104,11 @@ export default function Reconciliation() {
 
   const hasUploadedFiles = mckesson.files.length > 0 || kroll.files.length > 0;
 
-  useReconciliationDraft({
+  // Autosave stops once the cycle is saved (the 'detail' and 'past' views), because from
+  // then on the saved cycle is edited through its own audited functions.
+  const draft = useReconciliationDraft({
     items: draftItems,
-    enabled: draftItems.length > 0 && hasUploadedFiles && !!drugs,
-    draftId: currentDraftId,
-    onDraftCreated: setCurrentDraftId,
+    enabled: draftItems.length > 0 && hasUploadedFiles && !!drugs && (view === 'landing' || view === 'table'),
   });
 
   // ---------------------------------------------------------------- undo / redo
@@ -264,6 +269,10 @@ export default function Reconciliation() {
 
     setParsing(true);
     try {
+      // Normally a no-op: the files were already read and their DINs resolved in the
+      // background when they were dropped.
+      await prepareFiles([...mckesson.files, ...kroll.files]);
+
       // One shared signature set per source so a row repeated across files is only counted once.
       const mckessonSignatures = new Set<string>();
       const krollSignatures = new Set<string>();
@@ -386,6 +395,7 @@ export default function Reconciliation() {
     setSkippedDuplicates(0);
     setDraftItems([]);
     resetHistory();
+    draft.reset();
     mckesson.clear();
     kroll.clear();
     setFilePreviews({ mckesson: [], kroll: [] });
@@ -429,11 +439,15 @@ export default function Reconciliation() {
     }
 
     try {
-      const result = await createMutation.mutateAsync({ formData: cycleForm, items: draftItems });
+      // Stop autosaving and learn which draft to promote, so no orphaned draft is left.
+      const draftId = await draft.settle();
+      const result = await createMutation.mutateAsync({ formData: cycleForm, items: draftItems, cycleId: draftId });
+      draft.reset();
       toast.success('Reconciliation cycle saved');
       setActiveCycleId(result.cycleId);
       setView('detail');
     } catch (err) {
+      draft.resume();
       toast.error(err instanceof Error ? err.message : 'Failed to save cycle');
     }
   };
@@ -540,6 +554,7 @@ export default function Reconciliation() {
           onActualCountChange={handleActualCountChange}
           onNoteChange={handleNoteChange}
           onSave={handleSaveCycle}
+          draftStatus={draft.status}
           onBack={() => setView('landing')}
           saving={createMutation.isPending}
           onSearchChange={setSearchQuery}

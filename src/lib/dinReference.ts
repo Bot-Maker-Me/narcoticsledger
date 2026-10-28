@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { reportError } from '@/lib/errors';
 import { dinCandidates, digitsOf, normalizeDin } from '@/lib/din';
 import type { DrugSchedule } from '@/types/drug';
 
@@ -24,6 +25,9 @@ export interface DinReferenceEntry {
 
 /** Entries resolved this session; null means "the reference does not know this DIN". */
 const cache = new Map<string, DinReferenceEntry | null>();
+
+/** The edge function answers at most 2000 DINs per request. */
+const REFERENCE_CHUNK_SIZE = 1500;
 
 /** Maps CDSA schedule text (e.g. "CONTROLLED DRUGS (CDSA III)") onto app values. */
 function mapCdsaSchedule(label?: string): DrugSchedule | undefined {
@@ -73,31 +77,41 @@ export async function fetchReferenceEntries(dins: Array<string | null | undefine
   if (requested.size === 0) return;
 
   const keys = [...requested];
-  const { data, error } = await supabase.functions.invoke('din-reference', {
-    body: { dins: keys },
-  });
 
-  if (error) {
-    console.error('[din-reference] lookup failed:', error.message);
+  // The edge function answers at most 2000 DINs per call; anything beyond that used to be
+  // silently treated as "unknown". Ask in chunks, in parallel.
+  const chunks: string[][] = [];
+  for (let i = 0; i < keys.length; i += REFERENCE_CHUNK_SIZE) chunks.push(keys.slice(i, i + REFERENCE_CHUNK_SIZE));
+
+  const responses = await Promise.all(
+    chunks.map((chunk) => supabase.functions.invoke('din-reference', { body: { dins: chunk } }))
+  );
+
+  const failed = responses.some((response) => response.error);
+  if (failed) {
+    reportError(responses.find((response) => response.error)?.error, { scope: 'din-reference' });
+    // Do not cache misses for a failed lookup: the next attempt should try again.
     return;
   }
 
-  const rows = (data?.entries ?? []) as Array<{
-    din?: string;
-    description?: string;
-    strength?: string;
-    schedule?: string;
-  }>;
+  for (const { data } of responses) {
+    const rows = (data?.entries ?? []) as Array<{
+      din?: string;
+      description?: string;
+      strength?: string;
+      schedule?: string;
+    }>;
 
-  for (const row of rows) {
-    const key = normalizeDin(row.din);
-    if (!key) continue;
-    cache.set(key, {
-      din: key,
-      description: row.description || undefined,
-      strength: row.strength || undefined,
-      schedule: mapCdsaSchedule(row.schedule),
-    });
+    for (const row of rows) {
+      const key = normalizeDin(row.din);
+      if (!key) continue;
+      cache.set(key, {
+        din: key,
+        description: row.description || undefined,
+        strength: row.strength || undefined,
+        schedule: mapCdsaSchedule(row.schedule),
+      });
+    }
   }
 
   // Remember the DINs the reference does not know so they are not requested again.

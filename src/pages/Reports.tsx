@@ -16,7 +16,7 @@ import {
   type ReportType,
 } from '@/lib/reports';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell, BarChart, Bar } from 'recharts';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/motion';
 import SectionMarker from '@/components/SectionMarker';
 
 const chartTooltip = {

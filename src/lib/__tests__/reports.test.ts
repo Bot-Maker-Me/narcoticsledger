@@ -84,7 +84,7 @@ describe('countBySchedule / scheduleSlices', () => {
     ]);
 
     expect(slices).toHaveLength(4);
-    expect(slices.map((slice) => slice.color)).toEqual([...SCHEDULE_COLORS]);
+    expect(slices.map((slice) => slice.color)).toEqual(SCHEDULE_COLORS.slice(0, 4));
   });
 
   it('is empty for an empty catalogue', () => {

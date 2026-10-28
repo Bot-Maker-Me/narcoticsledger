@@ -9,7 +9,7 @@ import { formatPrice } from '@/lib/format';
 import { formatDayMonth, formatLongDate } from '@/lib/dates';
 import { useSystemSettings } from '@/hooks/useAdmin';
 import { useAllReconciliationItems } from '@/hooks/useReconciliation';
-import { motion } from 'framer-motion';
+import { motion } from '@/lib/motion';
 import SectionMarker from '@/components/SectionMarker';
 
 export default function Dashboard() {
