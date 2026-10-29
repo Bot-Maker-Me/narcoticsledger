@@ -3,11 +3,12 @@ import { supabase } from '@/lib/supabase';
 import { digitsOf } from '@/lib/din';
 import { getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
 import { toLedgerDateString } from '@/lib/ledgerDate';
+import { normalizeQuantity, type ImportKind } from '@/lib/ledgerQuantity';
 import type { ParsedDinData } from '@/types/reconciliation';
 import type { ParsedIndividualRow } from '@/lib/fileParser';
 import type { TransactionType } from '@/types/transaction';
 
-export type ImportKind = 'purchase' | 'dispense' | 'destruction';
+export type { ImportKind };
 
 /** The ledger label used for rows created by hand rather than imported from a file. */
 export const MANUAL_ENTRY_LABEL = 'Manual entry';
@@ -63,9 +64,9 @@ interface PendingTransaction {
 }
 
 function quantityForKind(kind: ImportKind, record: ParsedDinData): number {
-  if (kind === 'purchase') return Math.abs(record.purchased) || 0;
-  if (kind === 'dispense') return Math.abs(record.dispensed) || 0;
-  return Math.abs(record.dispensed || record.purchased || 0);
+  if (kind === 'purchase') return normalizeQuantity(kind, record.purchased);
+  if (kind === 'dispense') return normalizeQuantity(kind, record.dispensed);
+  return normalizeQuantity(kind, record.dispensed || record.purchased);
 }
 
 /** The most recent dated transaction in a DIN entry, as a ledger calendar day. */
@@ -151,7 +152,7 @@ async function saveImportedRecords({
   records: ParsedDinData[];
   fileName?: string;
 }): Promise<SaveResult> {
-  const valid = records.filter((record) => record.din && quantityForKind(kind, record) > 0);
+  const valid = records.filter((record) => record.din && quantityForKind(kind, record) !== 0);
   const invalidCount = records.length - valid.length;
 
   const result = await persistTransactions(
@@ -172,7 +173,7 @@ async function saveImportedRecords({
       noDin: result.notSent.noDin + records.filter((record) => !record.din).length,
       noQuantity:
         result.notSent.noQuantity +
-        records.filter((record) => record.din && quantityForKind(kind, record) <= 0).length,
+        records.filter((record) => record.din && quantityForKind(kind, record) === 0).length,
     },
   };
 }
@@ -187,7 +188,7 @@ async function saveImportedIndividualRows({
   rows: ParsedIndividualRow[];
   fileName?: string;
 }): Promise<SaveResult> {
-  const valid = rows.filter((row) => row.din && row.quantity > 0);
+  const valid = rows.filter((row) => row.din && normalizeQuantity(kind, row.quantity) !== 0);
   const invalidCount = rows.length - valid.length;
 
   const result = await persistTransactions(
@@ -195,7 +196,7 @@ async function saveImportedIndividualRows({
     valid.map((row) => ({
       din: row.din,
       description: row.description,
-      quantity: row.quantity,
+      quantity: normalizeQuantity(kind, row.quantity),
       date: toLedgerDateString(row.date ?? new Date()),
     })),
     fileName
@@ -206,7 +207,9 @@ async function saveImportedIndividualRows({
     skipped: result.skipped + invalidCount,
     notSent: {
       noDin: result.notSent.noDin + rows.filter((row) => !row.din).length,
-      noQuantity: result.notSent.noQuantity + rows.filter((row) => row.din && row.quantity <= 0).length,
+      noQuantity:
+        result.notSent.noQuantity +
+        rows.filter((row) => row.din && normalizeQuantity(kind, row.quantity) === 0).length,
     },
   };
 }
@@ -273,7 +276,7 @@ async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow
     id: row.id,
     din: row.drugs?.din ?? '--------',
     description: row.drugs?.description ?? 'Unknown',
-    quantity: Math.abs(Number(row.quantity ?? 0)),
+    quantity: normalizeQuantity(kind, row.quantity),
     type: config.type,
     source: config.source,
     created_at: row.date || row.created_at || new Date().toISOString(),
