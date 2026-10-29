@@ -1,6 +1,6 @@
 import { Loader2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { ImportedRecordRow } from '@/hooks/useImportedRecords';
 import { formatLedgerDate } from '@/lib/ledgerDate';
 import FileGroupTable from '@/components/records/FileGroupTable';
@@ -32,6 +32,17 @@ export default function SavedFilesList({
   onDeleteFile,
   deleting = false,
 }: SavedFilesListProps) {
+  const grouped = useMemo(() => {
+    const groups = new Map<string, ImportedRecordRow[]>();
+    for (const record of records ?? []) {
+      const fileName = record.file_name || `Imported ${formatLedgerDate(record.created_at)}`;
+      const bucket = groups.get(fileName);
+      if (bucket) bucket.push(record);
+      else groups.set(fileName, [record]);
+    }
+    return groups;
+  }, [records]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-neutral-400">
@@ -40,19 +51,7 @@ export default function SavedFilesList({
     );
   }
 
-  if (!records || records.length === 0) {
-    return <>{renderEmpty()}</>;
-  }
-
-  const grouped = new Map<string, ImportedRecordRow[]>();
-  for (const record of records) {
-    const fileName = record.file_name || `Imported ${formatLedgerDate(record.created_at)}`;
-    const bucket = grouped.get(fileName);
-    if (bucket) bucket.push(record);
-    else grouped.set(fileName, [record]);
-  }
-
-  if (grouped.size === 0) {
+  if (!records || records.length === 0 || grouped.size === 0) {
     return <>{renderEmpty()}</>;
   }
 

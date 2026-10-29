@@ -33,3 +33,27 @@ describe('generateRowSignature', () => {
     expect(a).toEqual(b);
   });
 });
+
+describe('generateRowSignature (dispensing exports)', () => {
+  // Regression: a 40,342-row Kroll export kept only 6,345 rows because genuine dispenses of
+  // the same drug, quantity and day produced the same signature.
+  const kroll = (rx: number) => ({ Rx: rx, 'Drug Name': 'TAB Apo-Lorazepam 1mg', FillDate: '01-Feb-26' });
+
+  it('keeps two different prescriptions for the same drug, quantity and day', () => {
+    const a = generateRowSignature('00655759', 3, d('2026-02-01'), kroll(2614293));
+    const b = generateRowSignature('00655759', 3, d('2026-02-01'), kroll(2614294));
+    expect(a).not.toEqual(b);
+  });
+
+  it('still catches the same prescription arriving again in an overlapping file', () => {
+    const a = generateRowSignature('00655759', 3, d('2026-02-01'), kroll(2614293));
+    const b = generateRowSignature('00655759', 3, d('2026-02-01'), kroll(2614293));
+    expect(a).toEqual(b);
+  });
+
+  it('does not mistake "Orig Rx" for the prescription number', () => {
+    const a = generateRowSignature('00655759', 3, d('2026-02-01'), { 'Orig Rx': 1, 'Drug Name': 'X DRUG 1MG' });
+    const b = generateRowSignature('00655759', 3, d('2026-02-01'), { 'Orig Rx': 2, 'Drug Name': 'X DRUG 1MG' });
+    expect(a).toEqual(b);
+  });
+});

@@ -1,4 +1,6 @@
+import { useRef } from 'react';
 import { Loader2, Trash2 } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { LucideIcon } from 'lucide-react';
 import type { ImportedRecordRow } from '@/hooks/useImportedRecords';
 import { formatLedgerDate } from '@/lib/ledgerDate';
@@ -17,6 +19,10 @@ interface FileGroupTableProps {
   deleting?: boolean;
 }
 
+/** Above this many rows only the visible ones are put in the page. */
+const VIRTUALIZE_ABOVE = 100;
+const ROW_HEIGHT = 45;
+
 const HEADER_CELL =
   'sticky top-0 z-10 border-b border-white/10 bg-ink-900 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-neutral-500';
 
@@ -32,6 +38,21 @@ export default function FileGroupTable({
   deleting = false,
 }: FileGroupTableProps) {
   const hidden = totalRows - records.length;
+  const virtualize = records.length > VIRTUALIZE_ABOVE;
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: virtualize ? records.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom =
+    virtualItems.length > 0 ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end : 0;
+  const visibleRecords = virtualize ? virtualItems.map((item) => records[item.index]) : records;
 
   return (
     <div className="border-b border-white/5 last:border-b-0">
@@ -53,7 +74,10 @@ export default function FileGroupTable({
         </button>
       </div>
 
-      <div className={scrollable ? 'max-h-[70vh] overflow-auto' : 'overflow-x-auto'}>
+      <div
+        ref={scrollRef}
+        className={scrollable || virtualize ? 'max-h-[70vh] overflow-auto' : 'overflow-x-auto'}
+      >
         <table className="w-full">
           <thead>
             <tr>
@@ -64,8 +88,17 @@ export default function FileGroupTable({
             </tr>
           </thead>
           <tbody>
-            {records.map((record) => (
-              <tr key={record.id} className="border-b border-white/5 transition-colors hover:bg-white/5">
+            {virtualize && paddingTop > 0 && (
+              <tr aria-hidden="true">
+                <td colSpan={4} style={{ height: paddingTop, padding: 0 }} />
+              </tr>
+            )}
+            {visibleRecords.map((record) => (
+              <tr
+                key={`${record.id}|${record.created_at}`}
+                style={virtualize ? { height: ROW_HEIGHT } : undefined}
+                className="border-b border-white/5 transition-colors hover:bg-white/5"
+              >
                 <td className="px-4 py-3 font-mono text-sm text-neutral-800">{record.din}</td>
                 <td className="px-4 py-3 text-sm text-neutral-600">{record.description}</td>
                 <td className="px-4 py-3 text-right text-sm text-neutral-600">{record.quantity}</td>
@@ -74,6 +107,11 @@ export default function FileGroupTable({
                 </td>
               </tr>
             ))}
+            {virtualize && paddingBottom > 0 && (
+              <tr aria-hidden="true">
+                <td colSpan={4} style={{ height: paddingBottom, padding: 0 }} />
+              </tr>
+            )}
             {hidden > 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-2 text-center text-xs text-neutral-400">

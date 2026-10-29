@@ -9,8 +9,8 @@
 
 export type UploadKind = 'csv' | 'xlsx' | 'xls';
 
-/** Largest file accepted. Real supplier exports are well under 5 MB. */
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+/** Largest file accepted. A 100,000-row Kroll dispensing export is about 26 MB (45 columns per row). */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 const KIND_BY_EXTENSION: Record<string, UploadKind> = {
   csv: 'csv',

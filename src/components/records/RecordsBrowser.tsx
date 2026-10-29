@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Filter, X } from 'lucide-react';
 import SectionMarker from '@/components/SectionMarker';
 import DinMonthlyTotal from '@/components/DinMonthlyTotal';
@@ -71,12 +71,15 @@ export default function RecordsBrowser({ kind }: { kind: ImportKind }) {
     setActiveFilters([]);
   };
 
+  // Typing stays responsive however many records there are: the (deferred) list is
+  // filtered after the input has already repainted.
+  const deferredFilters = useDeferredValue(filters);
   const filteredRecords = useMemo(() => {
     if (!savedRecords) return savedRecords;
     if (activeFilters.length === 0) return savedRecords;
 
-    return savedRecords.filter((record) => matchesFilters(record, filters));
-  }, [savedRecords, filters, activeFilters]);
+    return savedRecords.filter((record) => matchesFilters(record, deferredFilters));
+  }, [savedRecords, deferredFilters, activeFilters]);
 
   const isFiltering = activeFilters.length > 0;
   const Icon = meta.icon;
