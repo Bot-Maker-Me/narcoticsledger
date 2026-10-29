@@ -68,6 +68,18 @@ describe('validateUpload', () => {
 
     const fakeCsv = await validateUpload(file('a.csv', [0x4d, 0x5a, 0x90, 0x00, 0x03]));
     expect(fakeCsv.ok).toBe(false);
+
+    const mostlyNul = await validateUpload(file('b.csv', new Array(64).fill(0)));
+    expect(mostlyNul.ok).toBe(false);
+  });
+
+  it('accepts a Kroll-style CSV with stray NUL bytes in quoted empty fields', async () => {
+    const kroll = 'Rx,Qty,DIN,Lot\r\n1,3,00655759,"\0"\r\n2,4,00771313,"\0"\r\n';
+    expect((await validateUpload(file('Disp Kroll.csv', kroll, 'application/vnd.ms-excel'))).ok).toBe(true);
+  });
+
+  it('accepts a UTF-16 CSV with a byte-order mark', async () => {
+    expect((await validateUpload(file('a.csv', [0xff, 0xfe, 0x44, 0, 0x49, 0, 0x4e, 0, 0x0a, 0]))).ok).toBe(true);
   });
 
   it('rejects empty files and unsupported extensions', async () => {

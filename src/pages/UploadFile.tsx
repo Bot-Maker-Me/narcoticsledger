@@ -98,7 +98,9 @@ export default function UploadFile() {
           seenSignatures,
           packSizeFor
         );
-        collected.push(...data);
+        // A loop, not push(...data): spreading 100,000+ rows into call arguments overflows
+        // the call stack ("Maximum call stack size exceeded").
+        for (const row of data) collected.push(row);
         collectedPreviews.push(preview);
         skippedRows.noDin += fileSkipped.noDin;
         skippedRows.duplicates += fileSkipped.duplicates;

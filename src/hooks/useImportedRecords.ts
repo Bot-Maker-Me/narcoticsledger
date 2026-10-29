@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { digitsOf } from '@/lib/din';
 import { getDinReferenceEntry, referenceLabel } from '@/lib/dinReference';
 import { toLedgerDateString } from '@/lib/ledgerDate';
@@ -25,6 +26,8 @@ export interface ImportedRecordRow {
   source: string;
   created_at: string;
   file_name?: string;
+  /** Ledger entries merged into this row (the list is aggregated per file, drug and day). */
+  entries?: number;
 }
 
 export interface SaveResult {
@@ -63,6 +66,14 @@ interface PendingTransaction {
   date: string;
 }
 
+/**
+ * The NET quantity of a DIN in the direction of the import kind.
+ *
+ * A purchase keeps the file's sign, so a return, reversal or invoice correction (a negative
+ * quantity) reduces that DIN's total instead of adding to it. Dispense and destruction rows
+ * are handed over as the magnitude the file reported - `import_ledger_rows` applies the
+ * direction from the transaction type - so their sign is never applied twice.
+ */
 function quantityForKind(kind: ImportKind, record: ParsedDinData): number {
   if (kind === 'purchase') return normalizeQuantity(kind, record.purchased);
   if (kind === 'dispense') return normalizeQuantity(kind, record.dispensed);
@@ -81,11 +92,72 @@ function latestTransactionDate(record: ParsedDinData): string {
   return toLedgerDateString(latest.date);
 }
 
-/** Rows per request. A 10,000-row chunk is ~1 MB of JSON and one database transaction. */
-const IMPORT_CHUNK_SIZE = 10_000;
+/** Rows per request. The database accepts at most 50,000 per call. */
+const IMPORT_CHUNK_SIZE = 20_000;
+
+/** The database refuses a single ledger row above this quantity. */
+const MAX_ROW_QUANTITY = 1_000_000;
+
+/** How an import treats a file name that is already in the ledger. */
+type ImportMode = 'new' | 'replace';
+
+/** Thrown when the file name was already imported and the user has not agreed to replace it. */
+class AlreadyImportedError extends Error {
+  constructor(readonly fileName: string | undefined) {
+    super('This file was already imported');
+    this.name = 'AlreadyImportedError';
+  }
+}
+
+/** Thrown when the user declines to replace an earlier import. */
+class ImportCancelledError extends Error {
+  constructor() {
+    super('Import cancelled - nothing was saved');
+    this.name = 'ImportCancelledError';
+  }
+}
 
 /**
- * Writes the rows through `import_ledger_rows`: ONE call per 10,000 rows that validates
+ * Merges rows of the same drug and day into one ledger row.
+ *
+ * The ledger stores a drug, a quantity and a day per row - nothing identifies the individual
+ * prescription - so a dispensing file of 160,000 lines becomes a few thousand rows with
+ * exactly the same totals. That is what keeps the save, the stock maths and the record
+ * lists fast. A quantity above the per-row limit is split rather than rejected.
+ */
+export function mergeByDinAndDate(pending: PendingTransaction[]): PendingTransaction[] {
+  const merged = new Map<string, PendingTransaction>();
+
+  for (const row of pending) {
+    const din = digitsOf(row.din);
+    const key = `${din}|${row.date}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.quantity += row.quantity;
+      if (!existing.description && row.description) existing.description = row.description;
+    } else {
+      merged.set(key, { din, description: row.description, quantity: row.quantity, date: row.date });
+    }
+  }
+
+  const result: PendingTransaction[] = [];
+  for (const row of merged.values()) {
+    // Returns and purchases of the same day cancel out; a net of zero is not worth a row.
+    if (row.quantity === 0) continue;
+
+    const sign = row.quantity < 0 ? -1 : 1;
+    let remaining = Math.abs(row.quantity);
+    while (remaining > MAX_ROW_QUANTITY) {
+      result.push({ ...row, quantity: sign * MAX_ROW_QUANTITY });
+      remaining -= MAX_ROW_QUANTITY;
+    }
+    result.push({ ...row, quantity: sign * remaining });
+  }
+  return result;
+}
+
+/**
+ * Writes the rows through `import_ledger_rows`: ONE call per 20,000 rows that validates
  * every row, creates any missing drug and inserts the ledger entries atomically, with an
  * audit-log entry. (This used to be one lookup per DIN, then a batch insert, then a
  * row-by-row retry loop - hundreds of round trips for a normal file.)
@@ -96,12 +168,13 @@ const IMPORT_CHUNK_SIZE = 10_000;
 async function persistTransactions(
   kind: ImportKind,
   pending: PendingTransaction[],
-  fileName?: string
+  fileName: string | undefined,
+  mode: ImportMode
 ): Promise<SaveResult> {
   const sentDescription = new Set<string>();
 
-  const rows = pending.map((row) => {
-    const din = digitsOf(row.din);
+  const rows = mergeByDinAndDate(pending).map((row) => {
+    const din = row.din;
     const first = !sentDescription.has(din);
     sentDescription.add(din);
 
@@ -117,21 +190,21 @@ async function persistTransactions(
     return { din, description, schedule, quantity: String(row.quantity), date: row.date };
   });
 
-  const result: SaveResult = {
-    saved: 0,
-    skipped: 0,
-    notSent: { noDin: 0, noQuantity: 0 },
-    errors: [],
-  };
+  const result: SaveResult = { saved: 0, skipped: 0, notSent: { noDin: 0, noQuantity: 0 }, errors: [] };
 
   for (let start = 0; start < rows.length; start += IMPORT_CHUNK_SIZE) {
     const { data, error } = await supabase.rpc('import_ledger_rows', {
       p_kind: kind,
       p_file_name: fileName ?? null,
       p_rows: rows.slice(start, start + IMPORT_CHUNK_SIZE),
+      // Only the first chunk checks for / replaces an earlier import of the same file.
+      p_mode: start === 0 ? mode : 'append',
     });
 
-    if (error) throw error;
+    if (error) {
+      if (error.message?.includes('ALREADY_IMPORTED')) throw new AlreadyImportedError(fileName);
+      throw error;
+    }
 
     const chunk = data as { saved: number; skipped: number; errors: string[] };
     result.saved += chunk.saved;
@@ -143,15 +216,18 @@ async function persistTransactions(
 }
 
 /** Aggregated import: one ledger row per DIN (used by reconciliation-style imports). */
-async function saveImportedRecords({
-  kind,
-  records,
-  fileName,
-}: {
-  kind: ImportKind;
-  records: ParsedDinData[];
-  fileName?: string;
-}): Promise<SaveResult> {
+async function saveImportedRecords(
+  {
+    kind,
+    records,
+    fileName,
+  }: {
+    kind: ImportKind;
+    records: ParsedDinData[];
+    fileName?: string;
+  },
+  mode: ImportMode
+): Promise<SaveResult> {
   const valid = records.filter((record) => record.din && quantityForKind(kind, record) !== 0);
   const invalidCount = records.length - valid.length;
 
@@ -163,7 +239,8 @@ async function saveImportedRecords({
       quantity: quantityForKind(kind, record),
       date: latestTransactionDate(record),
     })),
-    fileName
+    fileName,
+    mode
   );
 
   return {
@@ -179,15 +256,18 @@ async function saveImportedRecords({
 }
 
 /** Per-row import: one ledger row per reported transaction. */
-async function saveImportedIndividualRows({
-  kind,
-  rows,
-  fileName,
-}: {
-  kind: ImportKind;
-  rows: ParsedIndividualRow[];
-  fileName?: string;
-}): Promise<SaveResult> {
+async function saveImportedIndividualRows(
+  {
+    kind,
+    rows,
+    fileName,
+  }: {
+    kind: ImportKind;
+    rows: ParsedIndividualRow[];
+    fileName?: string;
+  },
+  mode: ImportMode
+): Promise<SaveResult> {
   const valid = rows.filter((row) => row.din && normalizeQuantity(kind, row.quantity) !== 0);
   const invalidCount = rows.length - valid.length;
 
@@ -199,7 +279,8 @@ async function saveImportedIndividualRows({
       quantity: normalizeQuantity(kind, row.quantity),
       date: toLedgerDateString(row.date ?? new Date()),
     })),
-    fileName
+    fileName,
+    mode
   );
 
   return {
@@ -214,73 +295,41 @@ async function saveImportedIndividualRows({
   };
 }
 
-/** The API returns at most this many rows per request, so the ledger is paged through. */
-const FETCH_PAGE_SIZE = 1000;
-
-/** How many of those pages are read at once. */
-const PAGES_IN_FLIGHT = 6;
-
-interface ImportedRow {
+interface ImportedRecordPayload {
   id: string;
-  quantity: number | null;
+  din: string | null;
+  description: string | null;
+  quantity: number | string | null;
   created_at: string | null;
-  date: string | null;
   file_name: string | null;
-  drugs: { din: string; description: string } | null;
+  entries: number;
 }
 
-/** One page of the ledger, newest first. */
-async function fetchLedgerPage(kind: ImportKind, page: number): Promise<ImportedRow[]> {
-  const config = KIND_CONFIG[kind];
-  const from = page * FETCH_PAGE_SIZE;
-
-  const { data, error } = await supabase
-    .from('inventory_transactions')
-    .select('id, quantity, created_at, date, file_name, drugs!inner(din, description)')
-    .eq('transaction_type', config.type)
-    .is('voided_at', null)
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: true })
-    .range(from, from + FETCH_PAGE_SIZE - 1);
-
-  if (error) throw error;
-  return (data ?? []) as unknown as ImportedRow[];
-}
-
+/**
+ * The record list for one kind, aggregated by file, drug and day on the database and
+ * returned as ONE document. (It used to page through every ledger row 1,000 at a time:
+ * 161 sequential requests for a 161,000-row dispensing file.)
+ *
+ * `imported_records` already returns the NET quantity in the direction of the kind - the
+ * sign is flipped for dispenses and destructions there - so the value is passed through as
+ * reported instead of being taken as a magnitude, which would count every reversal as a
+ * dispensation.
+ */
 async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow[]> {
   const config = KIND_CONFIG[kind];
-  const rows: ImportedRow[] = [];
+  const { data, error } = await supabase.rpc('imported_records', { p_kind: kind });
+  if (error) throw error;
 
-  // A single request only returns the first page, which silently dropped older records
-  // and made the monthly totals short, so keep paging to the end. The first page doubles
-  // as a probe: only a full page means there is more to read.
-  const first = await fetchLedgerPage(kind, 0);
-  rows.push(...first);
-
-  if (first.length === FETCH_PAGE_SIZE) {
-    // The remaining pages are read a batch at a time. One at a time, a 42,000-row ledger
-    // is 42 round trips of ~0.5 s each, which left the screen loading for ~20 seconds.
-    for (let page = 1; ; page += PAGES_IN_FLIGHT) {
-      const batch = await Promise.all(
-        Array.from({ length: PAGES_IN_FLIGHT }, (_, offset) => fetchLedgerPage(kind, page + offset))
-      );
-
-      for (const pageRows of batch) rows.push(...pageRows);
-
-      // The ledger ends at the first short page, so any pages after it came back empty.
-      if (batch.some((pageRows) => pageRows.length < FETCH_PAGE_SIZE)) break;
-    }
-  }
-
-  return rows.map((row) => ({
+  return ((data ?? []) as unknown as ImportedRecordPayload[]).map((row) => ({
     id: row.id,
-    din: row.drugs?.din ?? '--------',
-    description: row.drugs?.description ?? 'Unknown',
-    quantity: normalizeQuantity(kind, row.quantity),
+    din: row.din ?? '--------',
+    description: row.description ?? 'Unknown',
+    quantity: Number(row.quantity ?? 0),
     type: config.type,
     source: config.source,
-    created_at: row.date || row.created_at || new Date().toISOString(),
+    created_at: row.created_at || new Date().toISOString(),
     file_name: row.file_name ?? undefined,
+    entries: row.entries,
   }));
 }
 
@@ -289,21 +338,37 @@ export function useImportedRecords(kind: ImportKind) {
     queryKey: ['imported-records', kind],
     queryFn: () => fetchImportedRecords(kind),
     enabled: kind === 'purchase' || kind === 'dispense' || kind === 'destruction',
-    // A month of dispensing records is 40+ paged requests. Without this, every visit to a
-    // record browser (and every remount of the upload screen) downloaded the whole ledger
-    // again. Imports and file deletions invalidate this key, so changes still show up at
-    // once; only plain navigation reuses what is already in the cache.
-    staleTime: 60_000,
   });
 }
 
-function useSaveMutation<T>(
+function useSaveMutation<T extends { fileName?: string }>(
   kind: ImportKind,
-  mutationFn: (variables: T) => Promise<SaveResult>
+  mutationFn: (variables: T, mode: ImportMode) => Promise<SaveResult>
 ) {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
+
   return useMutation({
-    mutationFn,
+    mutationFn: async (variables: T): Promise<SaveResult> => {
+      try {
+        return await mutationFn(variables, 'new');
+      } catch (error) {
+        if (!(error instanceof AlreadyImportedError)) throw error;
+
+        // The same file name is already in the ledger: importing it again would double
+        // every quantity, so the earlier import is only replaced with the user's consent.
+        const replace = await confirm({
+          title: 'This file was already imported',
+          description:
+            `"${variables.fileName ?? 'This file'}" is already in your records. Replace the earlier import? ` +
+            'The earlier rows are voided (they stay in Transaction History) and this file is saved instead.',
+          confirmLabel: 'Replace',
+          destructive: true,
+        });
+        if (!replace) throw new ImportCancelledError();
+        return mutationFn(variables, 'replace');
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['imported-records', kind] });
       queryClient.invalidateQueries({ queryKey: ['drugs'] });
@@ -313,16 +378,18 @@ function useSaveMutation<T>(
 }
 
 export function useSaveImportedRecords(kind: ImportKind) {
-  return useSaveMutation(kind, ({ records, fileName }: { records: ParsedDinData[]; fileName?: string }) =>
-    saveImportedRecords({ kind, records, fileName })
+  return useSaveMutation(
+    kind,
+    (variables: { records: ParsedDinData[]; fileName?: string }, mode) =>
+      saveImportedRecords({ kind, ...variables }, mode)
   );
 }
 
 export function useSaveImportedIndividualRows(kind: ImportKind) {
   return useSaveMutation(
     kind,
-    ({ rows, fileName }: { rows: ParsedIndividualRow[]; fileName?: string }) =>
-      saveImportedIndividualRows({ kind, rows, fileName })
+    (variables: { rows: ParsedIndividualRow[]; fileName?: string }, mode) =>
+      saveImportedIndividualRows({ kind, ...variables }, mode)
   );
 }
 

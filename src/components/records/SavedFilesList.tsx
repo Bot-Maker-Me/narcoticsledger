@@ -1,7 +1,6 @@
-import { useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { ImportedRecordRow } from '@/hooks/useImportedRecords';
 import { formatLedgerDate } from '@/lib/ledgerDate';
 import FileGroupTable from '@/components/records/FileGroupTable';
@@ -33,17 +32,15 @@ export default function SavedFilesList({
   onDeleteFile,
   deleting = false,
 }: SavedFilesListProps) {
-  // A month of dispensing records is tens of thousands of rows and a render happens on
-  // every keystroke in the filter boxes, so the grouping is cached until the rows change.
-  const groups = useMemo(() => {
-    const grouped = new Map<string, ImportedRecordRow[]>();
+  const grouped = useMemo(() => {
+    const groups = new Map<string, ImportedRecordRow[]>();
     for (const record of records ?? []) {
       const fileName = record.file_name || `Imported ${formatLedgerDate(record.created_at)}`;
-      const bucket = grouped.get(fileName);
+      const bucket = groups.get(fileName);
       if (bucket) bucket.push(record);
-      else grouped.set(fileName, [record]);
+      else groups.set(fileName, [record]);
     }
-    return [...grouped.entries()];
+    return groups;
   }, [records]);
 
   if (loading) {
@@ -54,13 +51,13 @@ export default function SavedFilesList({
     );
   }
 
-  if (groups.length === 0) {
+  if (!records || records.length === 0 || grouped.size === 0) {
     return <>{renderEmpty()}</>;
   }
 
   return (
     <div>
-      {groups.map(([fileName, fileRecords]) => (
+      {[...grouped.entries()].map(([fileName, fileRecords]) => (
         <FileGroupTable
           key={fileName}
           fileName={fileName}
