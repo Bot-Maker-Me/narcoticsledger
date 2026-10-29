@@ -70,3 +70,22 @@ describe('very large files', () => {
     expect(data).toHaveLength(150_000);
   }, 60_000);
 });
+
+describe('negative quantities (returns, reversals, corrections)', () => {
+  const header = 'Invoice,DIN,Product Name,Qty,Pack Size,Date';
+  const purchases = (qtys: number[]) =>
+    new File(
+      [[header, ...qtys.map((q, i) => `INV${i},00125083,DILAUDID TB 2MG 100,${q},100,2026-03-${String(i + 2).padStart(2, '0')}`)].join('\n') + '\n'],
+      `mck-${Math.random()}.csv`
+    );
+
+  it('nets a -1 reversal against the purchases of the same drug (16 packs = 1600 units)', async () => {
+    const { data } = await parseSingleFileWithPreview(purchases([2, 3, 3, 1, 1, 4, 3, -1]), 'mckesson', new Set());
+    expect(data.get('00125083')?.purchased ?? data.get('125083')?.purchased).toBe(1600);
+  });
+
+  it('keeps the sign on every individual row', async () => {
+    const { data } = await parseSingleFileWithIndividualRows(purchases([3, -1]), 'mckesson', new Set());
+    expect(data.map((row) => row.quantity)).toEqual([300, -100]);
+  });
+});

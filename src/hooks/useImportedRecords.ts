@@ -65,10 +65,14 @@ interface PendingTransaction {
   date: string;
 }
 
+/**
+ * The NET quantity of a DIN in the direction of the import kind. Negative rows (returns,
+ * reversals, corrections) are kept and reduce the total - never `Math.abs`.
+ */
 function quantityForKind(kind: ImportKind, record: ParsedDinData): number {
-  if (kind === 'purchase') return Math.abs(record.purchased) || 0;
-  if (kind === 'dispense') return Math.abs(record.dispensed) || 0;
-  return Math.abs(record.dispensed || record.purchased || 0);
+  if (kind === 'purchase') return record.purchased || 0;
+  if (kind === 'dispense') return record.dispensed || 0;
+  return record.dispensed || record.purchased || 0;
 }
 
 /** The most recent dated transaction in a DIN entry, as a ledger calendar day. */
@@ -116,7 +120,7 @@ class ImportCancelledError extends Error {
  * exactly the same totals. That is what keeps the save, the stock maths and the record
  * lists fast. A quantity above the per-row limit is split rather than rejected.
  */
-function mergeByDinAndDate(pending: PendingTransaction[]): PendingTransaction[] {
+export function mergeByDinAndDate(pending: PendingTransaction[]): PendingTransaction[] {
   const merged = new Map<string, PendingTransaction>();
 
   for (const row of pending) {
@@ -133,12 +137,16 @@ function mergeByDinAndDate(pending: PendingTransaction[]): PendingTransaction[] 
 
   const result: PendingTransaction[] = [];
   for (const row of merged.values()) {
-    let remaining = row.quantity;
+    // Returns and purchases of the same day cancel out; a net of zero is not worth a row.
+    if (row.quantity === 0) continue;
+
+    const sign = row.quantity < 0 ? -1 : 1;
+    let remaining = Math.abs(row.quantity);
     while (remaining > MAX_ROW_QUANTITY) {
-      result.push({ ...row, quantity: MAX_ROW_QUANTITY });
+      result.push({ ...row, quantity: sign * MAX_ROW_QUANTITY });
       remaining -= MAX_ROW_QUANTITY;
     }
-    result.push({ ...row, quantity: remaining });
+    result.push({ ...row, quantity: sign * remaining });
   }
   return result;
 }
@@ -215,7 +223,7 @@ async function saveImportedRecords(
   },
   mode: ImportMode
 ): Promise<SaveResult> {
-  const valid = records.filter((record) => record.din && quantityForKind(kind, record) > 0);
+  const valid = records.filter((record) => record.din && quantityForKind(kind, record) !== 0);
   const invalidCount = records.length - valid.length;
 
   const result = await persistTransactions(
@@ -237,7 +245,7 @@ async function saveImportedRecords(
       noDin: result.notSent.noDin + records.filter((record) => !record.din).length,
       noQuantity:
         result.notSent.noQuantity +
-        records.filter((record) => record.din && quantityForKind(kind, record) <= 0).length,
+        records.filter((record) => record.din && quantityForKind(kind, record) === 0).length,
     },
   };
 }
@@ -255,7 +263,7 @@ async function saveImportedIndividualRows(
   },
   mode: ImportMode
 ): Promise<SaveResult> {
-  const valid = rows.filter((row) => row.din && row.quantity > 0);
+  const valid = rows.filter((row) => row.din && Number.isFinite(row.quantity) && row.quantity !== 0);
   const invalidCount = rows.length - valid.length;
 
   const result = await persistTransactions(
@@ -275,7 +283,7 @@ async function saveImportedIndividualRows(
     skipped: result.skipped + invalidCount,
     notSent: {
       noDin: result.notSent.noDin + rows.filter((row) => !row.din).length,
-      noQuantity: result.notSent.noQuantity + rows.filter((row) => row.din && !(row.quantity > 0)).length,
+      noQuantity: result.notSent.noQuantity + rows.filter((row) => row.din && !(Number.isFinite(row.quantity) && row.quantity !== 0)).length,
     },
   };
 }
@@ -304,7 +312,7 @@ async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow
     id: row.id,
     din: row.din ?? '--------',
     description: row.description ?? 'Unknown',
-    quantity: Math.abs(Number(row.quantity ?? 0)),
+    quantity: Number(row.quantity ?? 0),
     type: config.type,
     source: config.source,
     created_at: row.created_at || new Date().toISOString(),
