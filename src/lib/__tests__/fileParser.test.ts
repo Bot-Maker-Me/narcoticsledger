@@ -88,4 +88,24 @@ describe('negative quantities (returns, reversals, corrections)', () => {
     const { data } = await parseSingleFileWithIndividualRows(purchases([3, -1]), 'mckesson', new Set());
     expect(data.map((row) => row.quantity)).toEqual([300, -100]);
   });
+
+  it('reads accounting-style credits as negative, not positive', async () => {
+    // Suppliers write a credit with parentheses, a trailing minus or a "CR" suffix; all of
+    // them are the same reversal. Reading them as positive added the return to the total.
+    const file = new File(
+      [
+        [
+          header,
+          'INV1,00125083,DILAUDID TB 2MG 100,3,100,2026-03-02',
+          'INV2,00125083,DILAUDID TB 2MG 100,(1),100,2026-03-30',
+          'INV3,00125083,DILAUDID TB 2MG 100,1-,100,2026-03-30',
+          'INV4,00125083,DILAUDID TB 2MG 100,1 CR,100,2026-03-30',
+        ].join('\n') + '\n',
+      ],
+      `mck-${Math.random()}.csv`
+    );
+
+    const { data } = await parseSingleFileWithIndividualRows(file, 'mckesson', new Set());
+    expect(data.map((row) => row.quantity)).toEqual([300, -100, -100, -100]);
+  });
 });

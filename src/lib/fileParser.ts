@@ -201,9 +201,21 @@ export function generateRowSignature(
 function extractNumber(value: unknown): number {
   if (value == null) return 0;
   if (typeof value === 'number') return Math.round(value);
-  const cleaned = String(value).replace(/[^0-9.\-]/g, '');
-  const parsed = parseFloat(cleaned);
-  return isNaN(parsed) ? 0 : Math.round(parsed);
+
+  const raw = String(value).trim();
+  if (!raw) return 0;
+
+  // Supplier files write a credit/return/correction in several ways: a leading or trailing
+  // minus ("-1", "1-"), accounting parentheses ("(1)"), a "CR" suffix ("1 CR"), or a Unicode
+  // minus sign. They all mean the same thing, and reading them as positive ADDS a return to
+  // a total instead of subtracting it — which is how a month of purchases came to report
+  // 1800 units instead of 1600.
+  const isNegative =
+    /^\(.*\)$/.test(raw) || raw.includes('-') || raw.includes('\u2212') || /cr\b/i.test(raw);
+
+  const parsed = parseFloat(raw.replace(/[^0-9.]/g, ''));
+  if (isNaN(parsed)) return 0;
+  return Math.round(isNegative ? -parsed : parsed);
 }
 
 function extractDate(value: unknown): Date | null {
