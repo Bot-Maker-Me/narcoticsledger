@@ -1,20 +1,16 @@
 /**
  * Validation for user-supplied spreadsheet files.
  *
- * The extension is the only gate on the file's *name*, because everything else a browser
- * reports about a file is a claim: Windows reports a `.csv` as `application/vnd.ms-excel`,
- * and some browsers report nothing at all. A MIME type is therefore never used to reject a
- * file - `isSupportedFile`/`uploadKindOf` accept any .csv, .xlsx or .xls.
- *
- * What is checked instead is the file itself: it must not be empty, it must fit the size
- * limit, and its leading bytes must not be one of the binary container signatures below,
- * which catches an .exe/.zip/.png renamed to .csv.
+ * A file name or a browser-reported MIME type is just a claim (so the MIME type is ignored), so each file is checked on
+ * independent things before it is handed to a parser: extension, size and
+ * the file's first bytes ("magic numbers"). A renamed executable or HTML page fails the
+ * last one even when the name is forged.
  */
 
 export type UploadKind = 'csv' | 'xlsx' | 'xls';
 
-/** Largest file accepted. A busy pharmacy's two-month Kroll dispensing export is ~10 MB. */
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+/** Largest file accepted. A 100,000-row Kroll dispensing export is about 26 MB (45 columns per row). */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 const KIND_BY_EXTENSION: Record<string, UploadKind> = {
   csv: 'csv',
@@ -25,23 +21,23 @@ const KIND_BY_EXTENSION: Record<string, UploadKind> = {
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // .xlsx is a ZIP container
 const OLE2_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]; // legacy .xls
 
-/**
- * Containers and executables a CSV is sometimes renamed from. The two workbook formats are
- * included so an .xlsx/.xls saved as .csv is caught instead of being parsed as garbage.
- */
+/** Signatures of files that are definitely not text, whatever their name says. */
 const BINARY_MAGIC: readonly (readonly number[])[] = [
-  [0x4d, 0x5a], // MZ - DOS/Windows executable
+  [0x4d, 0x5a], // Windows executable (MZ)
   [0x7f, 0x45, 0x4c, 0x46], // ELF
+  [0x50, 0x4b, 0x03, 0x04], // ZIP / xlsx / docx renamed to .csv
+  [0xd0, 0xcf, 0x11, 0xe0], // OLE2 / xls renamed to .csv
+  [0x25, 0x50, 0x44, 0x46], // PDF
   [0x89, 0x50, 0x4e, 0x47], // PNG
   [0xff, 0xd8, 0xff], // JPEG
   [0x47, 0x49, 0x46, 0x38], // GIF
-  [0x25, 0x50, 0x44, 0x46], // PDF
-  [0x1f, 0x8b], // gzip
-  [0x52, 0x61, 0x72, 0x21], // RAR
-  [0x37, 0x7a, 0xbc, 0xaf], // 7z
-  ZIP_MAGIC,
-  OLE2_MAGIC,
 ];
+const UTF16_BOMS: readonly (readonly number[])[] = [
+  [0xff, 0xfe],
+  [0xfe, 0xff],
+];
+/** Above this share of NUL bytes a file without a UTF-16 BOM is treated as binary. */
+const MAX_NUL_RATIO = 0.3;
 
 export const ACCEPT_ATTRIBUTE = '.csv,.xlsx,.xls';
 export const SUPPORTED_FORMATS_LABEL = '.csv, .xlsx, or .xls';
@@ -64,10 +60,7 @@ function startsWith(bytes: Uint8Array, magic: readonly number[]): boolean {
 
 export type ValidationResult = { ok: true; kind: UploadKind } | { ok: false; reason: string };
 
-/**
- * Full validation: extension, size, then the file's leading bytes. The browser-reported
- * MIME type is deliberately not consulted - see the module comment.
- */
+/** Full validation: extension, size, then the file's leading bytes. */
 export async function validateUpload(file: File): Promise<ValidationResult> {
   const kind = uploadKindOf(file.name);
   if (!kind) {
@@ -89,14 +82,14 @@ export async function validateUpload(file: File): Promise<ValidationResult> {
   if (kind === 'xls' && !startsWith(head, OLE2_MAGIC)) {
     return { ok: false, reason: `"${file.name}" is not a valid .xls workbook` };
   }
-  // NUL bytes are NOT treated as evidence of a binary file: Kroll writes a NUL placeholder
-  // into every empty column, so a genuine dispensing export is full of them. `parseRowsCore`
-  // strips them before parsing, and only a real container signature is rejected here.
-  if (kind === 'csv' && BINARY_MAGIC.some((magic) => startsWith(head, magic))) {
-    return {
-      ok: false,
-      reason: `"${file.name}" is not a text CSV file. It looks like a renamed archive, workbook or executable.`,
-    };
+  // Kroll exports put stray NUL bytes inside quoted empty fields ("\0"), so a few NULs are
+  // normal. A renamed binary is recognised by its signature or by being mostly NULs.
+  if (kind === 'csv') {
+    const isUtf16 = UTF16_BOMS.some((magic) => startsWith(head, magic));
+    const nulRatio = head.length === 0 ? 0 : head.reduce((n, byte) => n + (byte === 0 ? 1 : 0), 0) / head.length;
+    if (BINARY_MAGIC.some((magic) => startsWith(head, magic)) || (!isUtf16 && nulRatio > MAX_NUL_RATIO)) {
+      return { ok: false, reason: `"${file.name}" is not a text CSV file` };
+    }
   }
 
   return { ok: true, kind };

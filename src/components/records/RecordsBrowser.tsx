@@ -71,11 +71,9 @@ export default function RecordsBrowser({ kind }: { kind: ImportKind }) {
     setActiveFilters([]);
   };
 
-  // The filter scans every ledger row, which is tens of thousands of them, so it runs on a
-  // deferred copy of the values: the boxes stay responsive while typing and the list
-  // catches up a moment later.
+  // Typing stays responsive however many records there are: the (deferred) list is
+  // filtered after the input has already repainted.
   const deferredFilters = useDeferredValue(filters);
-
   const filteredRecords = useMemo(() => {
     if (!savedRecords) return savedRecords;
     if (activeFilters.length === 0) return savedRecords;

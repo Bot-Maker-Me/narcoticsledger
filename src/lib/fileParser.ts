@@ -1,4 +1,17 @@
-import { readFileRows, type ParsedRow } from '@/lib/readRows';
+import { readSupplierFile, type ParsedFile, type ParsedRow } from '@/lib/readRows';
+import {
+  DATE_COLUMNS,
+  DESCRIPTION_COLUMNS,
+  DIN_COLUMNS,
+  INVOICE_COLUMNS,
+  PACK_SIZE_COLUMNS,
+  PRODUCT_COLUMNS,
+  QTY_COLUMNS,
+  ROW_ID_COLUMNS,
+  TYPE_COLUMNS,
+  findColumnKey,
+  findExactColumnKey,
+} from '@/lib/columns';
 import { isSupportedFile } from '@/lib/uploadValidation';
 import { reportError } from '@/lib/errors';
 import { normalizeDin } from '@/lib/din';
@@ -35,8 +48,8 @@ export interface ParsedIndividualRow {
 export type PackSizeResolver = (din: string) => number | null;
 
 /**
- * Rows a parse could not turn into a transaction, and why. Reported so a screen can show
- * what the file contained but the ledger did not receive, instead of a bare row count.
+ * Rows a parse left out, and why, so a screen can say what the file contained but the
+ * ledger did not receive, instead of a bare row count.
  */
 export interface SkippedRows {
   /** The DIN cell held no digits, so no drug could be matched to the row. */
@@ -45,7 +58,7 @@ export interface SkippedRows {
   duplicates: number;
 }
 
-/** A one-line reason list for the rows a parse skipped, e.g. "2 rows with no DIN". */
+/** A one-line reason list for the rows a parse skipped, e.g. "2 with no DIN in the DIN column". */
 export function describeSkippedRows(skipped: SkippedRows): string {
   const parts: string[] = [];
   if (skipped.noDin > 0) parts.push(`${skipped.noDin} with no DIN in the DIN column`);
@@ -55,8 +68,12 @@ export function describeSkippedRows(skipped: SkippedRows): string {
 
 export { isSupportedFile };
 
-/** Reads a CSV/Excel file into plain row objects (off the main thread, cached per file). */
-const readRows = readFileRows;
+/** Rows handled between two pauses that let the browser paint and answer clicks. */
+const YIELD_EVERY_ROWS = 20_000;
+
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 /**
  * Starts reading the given files and resolving their DINs against the CDSA reference in
@@ -65,23 +82,24 @@ const readRows = readFileRows;
  * effectively instant. Errors are left for the real parse to report.
  */
 export async function prepareFiles(files: File[]): Promise<void> {
-  const rowSets = await Promise.all(files.map((file) => readFileRows(file)));
-  const dins = rowSets.flatMap((rows) => collectDins(rows));
-  await lookupReference(dins);
+  const parsedFiles = await Promise.all(files.map((file) => readSupplierFile(file)));
+  const dins = new Set<string>();
+  for (const { rows } of parsedFiles) collectDins(rows, dins);
+  await lookupReference([...dins]);
 }
 
-function createFilePreview(file: File, rows: ParsedRow[], uniqueDINs: number): FilePreview {
+function createFilePreview(file: File, parsed: ParsedFile, uniqueDINs: number): FilePreview {
   const ext = file.name.split('.').pop()?.toLowerCase() as 'csv' | 'xlsx' | 'xls';
 
   return {
     fileName: file.name,
     fileSize: file.size,
     format: ext,
-    totalRows: rows.length,
+    totalRows: parsed.rows.length,
     uniqueDINs,
-    sampleData: rows.slice(0, 5),
-    detectedColumns: rows.length > 0 ? Object.keys(rows[0]) : [],
-    dateRange: detectDateRange(rows),
+    sampleData: parsed.sample,
+    detectedColumns: parsed.columns,
+    dateRange: detectDateRange(parsed.rows),
   };
 }
 
@@ -107,9 +125,69 @@ function findMatchingDin(din: string, dataset: Map<string, ParsedDinData>): stri
   return null;
 }
 
+/** The columns that take part in a row signature, resolved once per file. */
+interface SignatureKeys {
+  invoiceKey: string | null;
+  productKey: string | null;
+  descKey: string | null;
+  rowIdKey: string | null;
+}
+
+function resolveSignatureKeys(keys: string[]): SignatureKeys {
+  return {
+    invoiceKey: findColumnKey(keys, INVOICE_COLUMNS),
+    productKey: findColumnKey(keys, PRODUCT_COLUMNS),
+    descKey: findColumnKey(keys, DESCRIPTION_COLUMNS),
+    rowIdKey: findExactColumnKey(keys, ROW_ID_COLUMNS),
+  };
+}
+
+function buildSignature(
+  din: string,
+  quantity: number,
+  day: string | null,
+  row: ParsedRow,
+  keys: SignatureKeys
+): string {
+  const parts: Array<string | number> = [din, quantity];
+
+  if (day) parts.push(day);
+
+  if (keys.invoiceKey && row[keys.invoiceKey]) {
+    parts.push(String(row[keys.invoiceKey]).trim());
+  }
+
+  // Product number / description: one invoice can hold several products that share a DIN
+  // (e.g. a 100-pack and a 200-pack) with the same quantity. Without this they were
+  // wrongly treated as duplicates and dropped.
+  if (keys.productKey && row[keys.productKey]) {
+    parts.push(`p${String(row[keys.productKey]).trim()}`);
+  }
+  if (keys.descKey && row[keys.descKey]) {
+    parts.push(String(row[keys.descKey]).trim().replace(/\s+/g, ' ').toUpperCase());
+  }
+
+  // Dispensing exports: the prescription number tells two real dispenses of the same
+  // drug, quantity and day apart (they used to collapse into one).
+  if (keys.rowIdKey && row[keys.rowIdKey]) {
+    parts.push(`rx${String(row[keys.rowIdKey]).trim()}`);
+  }
+
+  // Fallback: hash of relevant row data
+  if (parts.length === 2) {
+    parts.push(JSON.stringify({ din, quantity, date: day }));
+  }
+
+  return parts.join('|');
+}
+
+function dayOf(date: Date | null): string | null {
+  return date ? date.toISOString().split('T')[0] : null;
+}
+
 /**
  * Generate a unique signature for a row to detect duplicates
- * Uses DIN, quantity, date, and optionally invoice/transaction number
+ * Uses DIN, quantity, date, and optionally invoice/transaction/prescription number
  */
 export function generateRowSignature(
   din: string,
@@ -117,52 +195,7 @@ export function generateRowSignature(
   date: Date | null,
   row: ParsedRow
 ): string {
-  const parts = [din, quantity];
-
-  if (date) {
-    parts.push(date.toISOString().split('T')[0]);
-  }
-
-  const keys = Object.keys(row);
-  // Invoice-like identifiers. A dispensing export has no invoice, so the prescription
-  // number is what tells two transactions apart: the same drug, quantity and day for two
-  // different prescriptions were treated as one row and 70% of a Kroll dispensing export
-  // was silently discarded.
-  const invoiceKey = findColumnKey(keys, [
-    'Invoice',
-    'Invoice #',
-    'Invoice Number',
-    'Transaction #',
-    'Transaction ID',
-    'Order #',
-    'Order Number',
-    'Rx',
-    'Rx Number',
-    'Prescription #',
-    'Prescription Number',
-  ]);
-  if (invoiceKey && row[invoiceKey]) {
-    parts.push(String(row[invoiceKey]).trim());
-  }
-
-  // Product number / description: one invoice can hold several products that share a DIN
-  // (e.g. a 100-pack and a 200-pack) with the same quantity. Without this they were
-  // wrongly treated as duplicates and dropped.
-  const productKey = findColumnKey(keys, ['Product(s) #', 'Product #', 'Product Number', 'Product ID', 'Item #', 'Item Number', 'SKU']);
-  if (productKey && row[productKey]) {
-    parts.push(`p${String(row[productKey]).trim()}`);
-  }
-  const descKey = findColumnKey(keys, ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Medication']);
-  if (descKey && row[descKey]) {
-    parts.push(String(row[descKey]).trim().replace(/\s+/g, ' ').toUpperCase());
-  }
-
-  // Fallback: hash of relevant row data
-  if (parts.length === 2) {
-    parts.push(JSON.stringify({ din, quantity, date: date?.toISOString() }));
-  }
-
-  return parts.join('|');
+  return buildSignature(din, quantity, dayOf(date), row, resolveSignatureKeys(Object.keys(row)));
 }
 
 function extractNumber(value: unknown): number {
@@ -189,8 +222,34 @@ function extractDate(value: unknown): Date | null {
   return isNaN(date.getTime()) ? null : date;
 }
 
-/** Date headings seen in supplier exports. "First FillDate" is deliberately absent. */
-export const DATE_COLUMNS = ['Date', 'Transaction Date', 'Invoice Date', 'Order Date', 'Timestamp', 'Time', 'Day', 'FillDate', 'Fill Date'];
+interface ParsedDate {
+  date: Date | null;
+  /** `YYYY-MM-DD` (UTC), used by the duplicate check. */
+  day: string | null;
+}
+
+/**
+ * Date parsing with a per-file cache: a file with 160,000 rows has a few hundred distinct
+ * date strings, and `new Date(string)` is by far the slowest step of a row.
+ */
+function createDateParser(): (value: unknown) => ParsedDate {
+  const cache = new Map<string, ParsedDate>();
+
+  return (value) => {
+    if (typeof value !== 'string') {
+      const date = extractDate(value);
+      return { date, day: dayOf(date) };
+    }
+
+    let entry = cache.get(value);
+    if (!entry) {
+      const date = extractDate(value);
+      entry = { date, day: dayOf(date) };
+      cache.set(value, entry);
+    }
+    return entry;
+  };
+}
 
 function detectDateRange(rows: ParsedRow[]): { start: Date | null; end: Date | null } {
   if (rows.length === 0) return { start: null, end: null };
@@ -198,59 +257,17 @@ function detectDateRange(rows: ParsedRow[]): { start: Date | null; end: Date | n
   const dateKey = findColumnKey(Object.keys(rows[0]), DATE_COLUMNS);
   if (!dateKey) return { start: null, end: null };
 
-  const dates: Date[] = [];
+  const parseDate = createDateParser();
+  let start: Date | null = null;
+  let end: Date | null = null;
   for (const row of rows) {
-    const date = extractDate(row[dateKey]);
-    if (date) dates.push(date);
+    const { date } = parseDate(row[dateKey]);
+    if (!date) continue;
+    if (!start || date < start) start = date;
+    if (!end || date > end) end = date;
   }
-  if (dates.length === 0) return { start: null, end: null };
-
-  dates.sort((a, b) => a.getTime() - b.getTime());
-  return { start: dates[0], end: dates[dates.length - 1] };
+  return { start, end };
 }
-
-/**
- * Finds the parsed-row key that matches a candidate column name.
- *
- * Exact headings win over partial ones, and earlier candidates win over later ones.
- * Kroll's dispensing export carries both "First FillDate" and "FillDate"; a single
- * "does this key contain 'Date'?" test returned the *first* containing key, so every
- * dispensation was filed under the day the prescription was originally written
- * instead of the day it was filled.
- */
-export function findColumnKey(keys: string[], candidates: string[]): string | null {
-  const lowerKeys = keys.map((k) => k.toLowerCase().trim());
-
-  for (const candidate of candidates) {
-    const index = lowerKeys.indexOf(candidate.toLowerCase().trim());
-    if (index !== -1) return keys[index];
-  }
-
-  for (const candidate of candidates) {
-    const needle = candidate.toLowerCase().trim();
-    const index = lowerKeys.findIndex((k) => k.includes(needle));
-    if (index !== -1) return keys[index];
-  }
-
-  return null;
-}
-
-const DIN_COLUMNS = ['DIN', 'Drug Identification Number', 'DIN/PIN', 'drug id'];
-const QTY_COLUMNS = {
-  mckesson: ['Quantity', 'Qty', 'Received', 'Purchased', 'Shipped'],
-  kroll: ['Quantity', 'Qty', 'Dispensed', 'Filled', 'Count'],
-};
-const TYPE_COLUMNS = ['Type', 'Transaction Type', 'Action', 'Direction'];
-// More specific drug description column names to avoid picking up patient names
-const DESCRIPTION_COLUMNS = ['Drug Description', 'Product Name', 'Drug Name', 'Description', 'Product', 'Medication'];
-
-/**
- * Column names that explicitly carry a pack size. Deliberately strict: a generic
- * "Size" or "Package" column describes the product itself (bottle size, dose form),
- * not how many units the pharmacy received, so using it as a multiplier inflated
- * imported quantities.
- */
-const PACK_SIZE_COLUMNS = ['Pack Size', 'PackSize', 'Package Size', 'Pkg Size', 'Packs'];
 
 /** Sanity bounds for a pack size read out of a product description. */
 const MIN_PACK_SIZE = 2;
@@ -330,6 +347,7 @@ interface RowColumns {
   dateKey: string | null;
   descKey: string | null;
   packSizeKey: string | null;
+  signature: SignatureKeys;
 }
 
 function resolveColumns(rows: ParsedRow[], source: 'mckesson' | 'kroll'): RowColumns {
@@ -351,17 +369,17 @@ function resolveColumns(rows: ParsedRow[], source: 'mckesson' | 'kroll'): RowCol
     dateKey: findColumnKey(keys, DATE_COLUMNS),
     descKey: findColumnKey(keys, DESCRIPTION_COLUMNS),
     packSizeKey: findColumnKey(keys, PACK_SIZE_COLUMNS),
+    signature: resolveSignatureKeys(keys),
   };
 }
 
-/**
- * Resolves the server-side CDSA/DPD reference for every DIN in the file before the rows
- * are aggregated, so drug names, schedules and pack sizes are available while parsing.
- */
-function collectDins(rows: ParsedRow[]): string[] {
-  if (rows.length === 0) return [];
+/** Adds every DIN of the file to `into`, so each one is looked up once. */
+function collectDins(rows: ParsedRow[], into: Set<string> = new Set()): Set<string> {
+  if (rows.length === 0) return into;
   const dinKey = findColumnKey(Object.keys(rows[0]), DIN_COLUMNS);
-  return dinKey ? rows.map((row) => String(row[dinKey] ?? '')) : [];
+  if (!dinKey) return into;
+  for (const row of rows) into.add(String(row[dinKey] ?? ''));
+  return into;
 }
 
 async function lookupReference(dins: string[]): Promise<void> {
@@ -373,38 +391,45 @@ async function lookupReference(dins: string[]): Promise<void> {
   }
 }
 
+/**
+ * Resolves the server-side CDSA/DPD reference for every DIN in the file before the rows
+ * are aggregated, so drug names, schedules and pack sizes are available while parsing.
+ */
 async function prefetchDinReference(rows: ParsedRow[]): Promise<void> {
-  await lookupReference(collectDins(rows));
+  await lookupReference([...collectDins(rows)]);
 }
 
 /** Aggregates a file's rows into one entry per DIN (used by reconciliation imports). */
-function aggregateRows(
+async function aggregateRows(
   rows: ParsedRow[],
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
-): Map<string, ParsedDinData> {
+): Promise<Map<string, ParsedDinData>> {
   if (rows.length === 0) return new Map();
 
-  const { dinKey, qtyKey, typeKey, dateKey, descKey, packSizeKey } = resolveColumns(rows, source);
+  const { dinKey, qtyKey, typeKey, dateKey, descKey, packSizeKey, signature } = resolveColumns(rows, source);
+  const parseDate = createDateParser();
   const result = new Map<string, ParsedDinData>();
 
-  for (const row of rows) {
+  for (let index = 0; index < rows.length; index += 1) {
+    if (index > 0 && index % YIELD_EVERY_ROWS === 0) await yieldToMain();
+
+    const row = rows[index];
     const din = normalizeDin(row[dinKey]);
     if (!din) continue;
 
-    const existing = result.get(din) ?? { din, purchased: 0, dispensed: 0, description: undefined, transactions: [] };
-
     let qty = qtyKey ? extractNumber(row[qtyKey]) : 1;
-    const date = dateKey ? extractDate(row[dateKey]) : null;
+    const { date, day } = dateKey ? parseDate(row[dateKey]) : { date: null, day: null };
 
     // Generate row signature for deduplication (on the raw, as-reported quantity)
     if (seenSignatures) {
-      const signature = generateRowSignature(din, qty, date, row);
-      if (seenSignatures.has(signature)) continue;
-      seenSignatures.add(signature);
+      const rowSignature = buildSignature(din, qty, day, row, signature);
+      if (seenSignatures.has(rowSignature)) continue;
+      seenSignatures.add(rowSignature);
     }
 
+    const existing = result.get(din) ?? { din, purchased: 0, dispensed: 0, description: undefined, transactions: [] };
     const transactionType = resolveTransactionType(row, source, typeKey);
 
     if (transactionType === 'purchase') {
@@ -433,19 +458,23 @@ function aggregateRows(
 }
 
 /** Keeps one row per reported transaction (used by the per-row upload flow). */
-function parseIndividualRows(
+async function parseIndividualRows(
   rows: ParsedRow[],
   source: 'mckesson' | 'kroll',
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
-): { rows: ParsedIndividualRow[]; skipped: SkippedRows } {
-  if (rows.length === 0) return { rows: [], skipped: { noDin: 0, duplicates: 0 } };
-
-  const { dinKey, qtyKey, typeKey, dateKey, descKey, packSizeKey } = resolveColumns(rows, source);
-  const result: ParsedIndividualRow[] = [];
+): Promise<{ rows: ParsedIndividualRow[]; skipped: SkippedRows }> {
   const skipped: SkippedRows = { noDin: 0, duplicates: 0 };
+  if (rows.length === 0) return { rows: [], skipped };
 
-  for (const row of rows) {
+  const { dinKey, qtyKey, typeKey, dateKey, descKey, packSizeKey, signature } = resolveColumns(rows, source);
+  const parseDate = createDateParser();
+  const result: ParsedIndividualRow[] = [];
+
+  for (let index = 0; index < rows.length; index += 1) {
+    if (index > 0 && index % YIELD_EVERY_ROWS === 0) await yieldToMain();
+
+    const row = rows[index];
     const din = normalizeDin(row[dinKey]);
     if (!din) {
       skipped.noDin += 1;
@@ -453,15 +482,15 @@ function parseIndividualRows(
     }
 
     let qty = qtyKey ? extractNumber(row[qtyKey]) : 1;
-    const date = dateKey ? extractDate(row[dateKey]) : null;
+    const { date, day } = dateKey ? parseDate(row[dateKey]) : { date: null, day: null };
 
     if (seenSignatures) {
-      const signature = generateRowSignature(din, qty, date, row);
-      if (seenSignatures.has(signature)) {
+      const rowSignature = buildSignature(din, qty, day, row, signature);
+      if (seenSignatures.has(rowSignature)) {
         skipped.duplicates += 1;
         continue;
       }
-      seenSignatures.add(signature);
+      seenSignatures.add(rowSignature);
     }
 
     const transactionType = resolveTransactionType(row, source, typeKey);
@@ -491,11 +520,11 @@ export async function parseSingleFileWithPreview(
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
 ): Promise<{ data: Map<string, ParsedDinData>; preview: FilePreview }> {
-  const rows = await readRows(file);
-  await prefetchDinReference(rows);
+  const parsed = await readSupplierFile(file);
+  await prefetchDinReference(parsed.rows);
 
-  const data = aggregateRows(rows, source, seenSignatures, packSizeFor);
-  return { data, preview: createFilePreview(file, rows, data.size) };
+  const data = await aggregateRows(parsed.rows, source, seenSignatures, packSizeFor);
+  return { data, preview: createFilePreview(file, parsed, data.size) };
 }
 
 /** Parses one file into individual transaction rows plus a preview of what was found. */
@@ -505,11 +534,11 @@ export async function parseSingleFileWithIndividualRows(
   seenSignatures?: Set<string>,
   packSizeFor?: PackSizeResolver
 ): Promise<{ data: ParsedIndividualRow[]; preview: FilePreview; skipped: SkippedRows }> {
-  const rows = await readRows(file);
-  await prefetchDinReference(rows);
+  const parsed = await readSupplierFile(file);
+  await prefetchDinReference(parsed.rows);
 
-  const { rows: data, skipped } = parseIndividualRows(rows, source, seenSignatures, packSizeFor);
-  return { data, preview: createFilePreview(file, rows, data.length), skipped };
+  const { rows: data, skipped } = await parseIndividualRows(parsed.rows, source, seenSignatures, packSizeFor);
+  return { data, preview: createFilePreview(file, parsed, data.length), skipped };
 }
 
 /** Merges the purchase and dispensing DIN maps, matching DINs across padding styles. */
