@@ -29,10 +29,24 @@ export interface ImportedRecordRow {
   entries?: number;
 }
 
-interface SaveResult {
+export interface SaveResult {
   saved: number;
   skipped: number;
+  /** Why rows never reached the database, so a screen can say more than "N skipped". */
+  notSent: { noDin: number; noQuantity: number };
   errors: string[];
+}
+
+/** A one-line reason list for the rows a save left out, e.g. "312 with no quantity". */
+export function describeSkipped(result: SaveResult): string {
+  const parts: string[] = [];
+  if (result.notSent.noDin > 0) parts.push(`${result.notSent.noDin} with no DIN`);
+  if (result.notSent.noQuantity > 0) parts.push(`${result.notSent.noQuantity} with no quantity`);
+
+  const rejected = result.skipped - result.notSent.noDin - result.notSent.noQuantity;
+  if (rejected > 0) parts.push(`${rejected} rejected by the ledger`);
+
+  return parts.join(', ');
 }
 
 /** How each import kind is written to the ledger. */
@@ -163,7 +177,7 @@ async function persistTransactions(
     return { din, description, schedule, quantity: String(row.quantity), date: row.date };
   });
 
-  const result: SaveResult = { saved: 0, skipped: 0, errors: [] };
+  const result: SaveResult = { saved: 0, skipped: 0, notSent: { noDin: 0, noQuantity: 0 }, errors: [] };
 
   for (let start = 0; start < rows.length; start += IMPORT_CHUNK_SIZE) {
     const { data, error } = await supabase.rpc('import_ledger_rows', {
@@ -216,7 +230,16 @@ async function saveImportedRecords(
     mode
   );
 
-  return { ...result, skipped: result.skipped + invalidCount };
+  return {
+    ...result,
+    skipped: result.skipped + invalidCount,
+    notSent: {
+      noDin: result.notSent.noDin + records.filter((record) => !record.din).length,
+      noQuantity:
+        result.notSent.noQuantity +
+        records.filter((record) => record.din && quantityForKind(kind, record) <= 0).length,
+    },
+  };
 }
 
 /** Per-row import: one ledger row per reported transaction. */
@@ -247,7 +270,14 @@ async function saveImportedIndividualRows(
     mode
   );
 
-  return { ...result, skipped: result.skipped + invalidCount };
+  return {
+    ...result,
+    skipped: result.skipped + invalidCount,
+    notSent: {
+      noDin: result.notSent.noDin + rows.filter((row) => !row.din).length,
+      noQuantity: result.notSent.noQuantity + rows.filter((row) => row.din && !(row.quantity > 0)).length,
+    },
+  };
 }
 
 interface ImportedRecordPayload {

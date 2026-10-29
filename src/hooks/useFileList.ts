@@ -6,6 +6,8 @@ import { isSupportedFile, validateUploads, SUPPORTED_FORMATS_LABEL } from '@/lib
 export interface FileListState {
   files: File[];
   dragOver: boolean;
+  /** True while a file that was just added is still being read in the background. */
+  preparing: boolean;
   setDragOver: (value: boolean) => void;
   handleDrop: (event: DragEvent<HTMLDivElement>) => void;
   handleSelect: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -22,6 +24,10 @@ export interface FileListState {
 export function useFileList(): FileListState {
   const [files, setFiles] = useState<File[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  // A 10 MB export takes a few seconds to read, so the screens show a progress hint while
+  // a read is in flight. A counter rather than a flag: two quick drops must not clear the
+  // hint for each other.
+  const [readsInFlight, setReadsInFlight] = useState(0);
 
   const addFiles = useCallback(async (incoming: File[]) => {
     if (incoming.length === 0) return;
@@ -31,7 +37,8 @@ export function useFileList(): FileListState {
       return;
     }
 
-    // Extension, MIME type, size and magic bytes - a renamed file is rejected here.
+    // Extension, size and magic bytes. A genuinely renamed file is rejected here; the
+    // browser-reported MIME type is ignored, because it is wrong for .csv on Windows.
     const { accepted, rejected } = await validateUploads(incoming.filter(isSupportedFile));
     for (const { reason } of rejected) toast.error(reason);
     if (accepted.length === 0) return;
@@ -40,7 +47,10 @@ export function useFileList(): FileListState {
 
     // Parse in the background right away so "Process" is instant. Any error is reported
     // by the real parse, with the file's name, when the user presses the button.
-    void prepareFiles(accepted).catch(() => undefined);
+    setReadsInFlight((count) => count + 1);
+    void prepareFiles(accepted)
+      .catch(() => undefined)
+      .finally(() => setReadsInFlight((count) => Math.max(0, count - 1)));
   }, []);
 
   const handleDrop = useCallback(
@@ -67,7 +77,19 @@ export function useFileList(): FileListState {
     setFiles((previous) => previous.filter((_, i) => i !== index));
   }, []);
 
-  const clear = useCallback(() => setFiles([]), []);
+  const clear = useCallback(() => {
+    setFiles([]);
+    setReadsInFlight(0);
+  }, []);
 
-  return { files, dragOver, setDragOver, handleDrop, handleSelect, remove, clear };
+  return {
+    files,
+    dragOver,
+    preparing: readsInFlight > 0,
+    setDragOver,
+    handleDrop,
+    handleSelect,
+    remove,
+    clear,
+  };
 }

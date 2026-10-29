@@ -18,8 +18,9 @@ export interface InventoryTransaction {
   /** Display date: the ledger day, falling back to the insertion timestamp. */
   created_at: string;
   /**
-   * Ledger rows are never deleted — a file is voided instead, which keeps the audit trail
-   * intact while removing the rows from stock maths and the record browsers.
+   * A file is *voided* rather than deleted, which keeps the audit trail intact while
+   * removing the rows from stock maths and the record browsers. Voided rows can later be
+   * purged for good from the cleanup card on Transaction History.
    */
   voided_at: string | null;
 }

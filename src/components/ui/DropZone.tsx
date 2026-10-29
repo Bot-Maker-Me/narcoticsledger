@@ -1,5 +1,5 @@
 import { useRef, type ChangeEvent, type DragEvent } from 'react';
-import { CheckCircle2, FileSpreadsheet, X } from 'lucide-react';
+import { CheckCircle2, FileSpreadsheet, Loader2, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { formatBytes } from '@/lib/format';
 
@@ -14,6 +14,8 @@ export interface DropZoneProps {
   multiple?: boolean;
   /** Small print under the description, e.g. "Drag & drop or click to browse". */
   hint?: string;
+  /** True while the selected files are still being read in the background. */
+  preparing?: boolean;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDragLeave: () => void;
@@ -38,6 +40,7 @@ export default function DropZone({
   accept = '.csv,.xlsx,.xls',
   multiple = true,
   hint,
+  preparing = false,
   onDrop,
   onDragOver,
   onDragLeave,
@@ -128,6 +131,13 @@ export default function DropZone({
               </div>
             ))}
           </div>
+
+          {preparing && (
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-neutral-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Reading file… a 10 MB export takes a few seconds
+            </p>
+          )}
         </div>
       )}
     </div>

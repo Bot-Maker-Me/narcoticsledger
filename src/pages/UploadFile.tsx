@@ -8,15 +8,18 @@ import FilePreviewDialog from '@/components/records/FilePreviewDialog';
 import SavedFilesList from '@/components/records/SavedFilesList';
 import { RECORD_KINDS } from '@/components/records/config';
 import {
+  describeSkippedRows,
   parseSingleFileWithIndividualRows,
   type FilePreview,
   type ParsedIndividualRow,
+  type SkippedRows,
 } from '@/lib/fileParser';
 import { createPackSizeResolver } from '@/lib/dinReference';
 import { useDrugs } from '@/hooks/useDrugs';
 import { useFileList } from '@/hooks/useFileList';
 import { useDeleteImportedFile } from '@/hooks/useDeleteImportedFile';
 import {
+  describeSkipped,
   useImportedRecords,
   useSaveImportedIndividualRows,
   type ImportKind,
@@ -46,7 +49,8 @@ const PREVIEW_ROW_LIMIT = 20;
 export default function UploadFile() {
   const [kind, setKind] = useState<ImportKind>('purchase');
   const meta = RECORD_KINDS[kind];
-  const { files, dragOver, setDragOver, handleDrop, handleSelect, remove, clear } = useFileList();
+  const { files, dragOver, preparing, setDragOver, handleDrop, handleSelect, remove, clear } =
+    useFileList();
 
   const { data: savedRecords, isLoading: savedLoading } = useImportedRecords(kind);
   const { data: drugs } = useDrugs();
@@ -57,11 +61,16 @@ export default function UploadFile() {
   const [rows, setRows] = useState<ParsedIndividualRow[]>([]);
   const [previews, setPreviews] = useState<FilePreview[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  /** Rows the file contained that could not be turned into a transaction. */
+  const [skipped, setSkipped] = useState<SkippedRows>({ noDin: 0, duplicates: 0 });
+
+  const skippedTotal = skipped.noDin + skipped.duplicates;
 
   const resetUpload = () => {
     setRows([]);
     setPreviews([]);
     setShowPreview(false);
+    setSkipped({ noDin: 0, duplicates: 0 });
     clear();
   };
 
@@ -80,9 +89,10 @@ export default function UploadFile() {
       const seenSignatures = new Set<string>();
       const collected: ParsedIndividualRow[] = [];
       const collectedPreviews: FilePreview[] = [];
+      const skippedRows: SkippedRows = { noDin: 0, duplicates: 0 };
 
       for (const file of files) {
-        const { data, preview } = await parseSingleFileWithIndividualRows(
+        const { data, preview, skipped: fileSkipped } = await parseSingleFileWithIndividualRows(
           file,
           meta.parseSource,
           seenSignatures,
@@ -92,12 +102,20 @@ export default function UploadFile() {
         // the call stack ("Maximum call stack size exceeded").
         for (const row of data) collected.push(row);
         collectedPreviews.push(preview);
+        skippedRows.noDin += fileSkipped.noDin;
+        skippedRows.duplicates += fileSkipped.duplicates;
       }
 
       setPreviews(collectedPreviews);
       setRows(collected);
+      setSkipped(skippedRows);
       setShowPreview(true);
-      toast.success(`Processed ${collected.length} rows from ${files.length} file(s)`);
+
+      const unreadable = skippedRows.noDin + skippedRows.duplicates;
+      toast.success(
+        `Processed ${collected.length} rows from ${files.length} file(s)` +
+          (unreadable > 0 ? ` · ${unreadable} row(s) could not be read` : '')
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to parse files');
     } finally {
@@ -113,13 +131,16 @@ export default function UploadFile() {
 
     try {
       const result = await saveMutation.mutateAsync({ rows, fileName: files[0]?.name });
+      const reason = describeSkipped(result);
 
       if (result.errors.length > 0) {
         toast.error(
-          `Saved ${result.saved} rows, ${result.skipped} failed. Some rows may already exist in inventory.`
+          `Saved ${result.saved} rows · ${result.skipped} not saved (${reason}). ${result.errors[0]}`
         );
+      } else if (result.skipped > 0) {
+        toast.success(`Saved ${result.saved} rows · ${result.skipped} not saved (${reason})`);
       } else {
-        toast.success(`Saved ${result.saved} rows${result.skipped ? ` (${result.skipped} skipped)` : ''}`);
+        toast.success(`Saved ${result.saved} rows`);
       }
 
       resetUpload();
@@ -169,6 +190,7 @@ export default function UploadFile() {
           icon={meta.icon}
           files={files}
           dragOver={dragOver}
+          preparing={preparing}
           onDrop={handleDrop}
           onDragOver={(event) => {
             event.preventDefault();
@@ -190,6 +212,13 @@ export default function UploadFile() {
 
       {rows.length > 0 && (
         <div className="mb-6">
+          {skippedTotal > 0 && (
+            <div className="mb-4 rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-700">
+              {skippedTotal} row{skippedTotal === 1 ? '' : 's'} in this file were not read and will not be
+              saved: {describeSkippedRows(skipped)}.
+            </div>
+          )}
+
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-neutral-900">Parsed Rows ({rows.length})</h2>
             <button className="btn-primary" onClick={handleSaveRecords} disabled={saveMutation.isPending}>

@@ -1,10 +1,10 @@
 /**
  * Validation for user-supplied spreadsheet files.
  *
- * A file name or a browser-reported MIME type is just a claim, so each file is checked on
- * four independent things before it is handed to a parser: extension, MIME type, size and
+ * A file name or a browser-reported MIME type is just a claim (so the MIME type is ignored), so each file is checked on
+ * independent things before it is handed to a parser: extension, size and
  * the file's first bytes ("magic numbers"). A renamed executable or HTML page fails the
- * last one even when the first three are forged.
+ * last one even when the name is forged.
  */
 
 export type UploadKind = 'csv' | 'xlsx' | 'xls';
@@ -16,20 +16,6 @@ const KIND_BY_EXTENSION: Record<string, UploadKind> = {
   csv: 'csv',
   xlsx: 'xlsx',
   xls: 'xls',
-};
-
-/**
- * MIME types browsers actually report for each kind. The empty string is included because
- * Windows and some browsers report nothing for CSV/XLS; the magic-byte check still applies.
- */
-const MIME_BY_KIND: Record<UploadKind, readonly string[]> = {
-  csv: ['', 'text/csv', 'text/plain', 'application/csv', 'application/vnd.ms-excel', 'application/octet-stream'],
-  xlsx: [
-    '',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/octet-stream',
-  ],
-  xls: ['', 'application/vnd.ms-excel', 'application/octet-stream'],
 };
 
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // .xlsx is a ZIP container
@@ -74,7 +60,7 @@ function startsWith(bytes: Uint8Array, magic: readonly number[]): boolean {
 
 export type ValidationResult = { ok: true; kind: UploadKind } | { ok: false; reason: string };
 
-/** Full validation: extension, MIME type, size, then the file's leading bytes. */
+/** Full validation: extension, size, then the file's leading bytes. */
 export async function validateUpload(file: File): Promise<ValidationResult> {
   const kind = uploadKindOf(file.name);
   if (!kind) {
@@ -86,10 +72,6 @@ export async function validateUpload(file: File): Promise<ValidationResult> {
   if (file.size > MAX_UPLOAD_BYTES) {
     const limit = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
     return { ok: false, reason: `"${file.name}" is larger than ${limit} MB` };
-  }
-
-  if (!MIME_BY_KIND[kind].includes(file.type)) {
-    return { ok: false, reason: `"${file.name}" does not look like a ${kind.toUpperCase()} file (${file.type})` };
   }
 
   const head = new Uint8Array(await file.slice(0, 8192).arrayBuffer());

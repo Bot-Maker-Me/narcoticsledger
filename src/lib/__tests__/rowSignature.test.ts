@@ -32,6 +32,29 @@ describe('generateRowSignature', () => {
     const b = generateRowSignature(DIN, 48, d('2026-02-02'), row(351319, 157722, 'SIV ACET W/CD 300/15/8MG 100'));
     expect(a).toEqual(b);
   });
+
+  // Regression: a Kroll dispensing export has no invoice column. Without the prescription
+  // number in the signature, two patients collecting the same drug in the same quantity on
+  // the same day collapsed into one row — 28,000 of a 40,000-row export were dropped.
+  const dispenseRow = (rx: number) => ({
+    Rx: rx,
+    Qty: 3,
+    'Drug Name': 'TAB Apo-Lorazepam 1mg',
+    DIN: '00655759',
+    FillDate: '01-Feb-26',
+  });
+
+  it('keeps different prescriptions of the same drug, qty and day apart', () => {
+    const a = generateRowSignature('00655759', 3, d('2026-02-01'), dispenseRow(2614293));
+    const b = generateRowSignature('00655759', 3, d('2026-02-01'), dispenseRow(2614366));
+    expect(a).not.toEqual(b);
+  });
+
+  it('still treats the same prescription line twice as a duplicate', () => {
+    const a = generateRowSignature('00655759', 3, d('2026-02-01'), dispenseRow(2614293));
+    const b = generateRowSignature('00655759', 3, d('2026-02-01'), dispenseRow(2614293));
+    expect(a).toEqual(b);
+  });
 });
 
 describe('generateRowSignature (dispensing exports)', () => {
