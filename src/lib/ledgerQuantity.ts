@@ -1,11 +1,11 @@
 /**
  * Sign handling for imported ledger quantities.
  *
- * The ledger stores the *signed* quantity the file reported for a purchase, so a return,
- * reversal or invoice correction (a negative quantity) reduces that DIN's totals instead
- * of adding to them. Reductions (dispense, destruction) are stored negative and their
- * direction comes from the transaction type, so they are read back as a positive
- * magnitude — the sign must not leak into "units dispensed".
+ * The ledger keeps the sign the file reported: a return, reversal or invoice correction
+ * arrives as a negative quantity, and that sign has to survive so the reversal *reduces* the
+ * totals instead of being counted as one more movement. `import_ledger_rows` applies the
+ * direction of the import kind on top of this sign, so a negative purchase row takes stock
+ * away and a negative dispense row gives the units back.
  *
  * This is audit-relevant: the monthly DIN totals are built from these values, so a stray
  * `abs()` here makes a month of corrections report the wrong total.
@@ -15,16 +15,13 @@
 export type ImportKind = 'purchase' | 'dispense' | 'destruction';
 
 /**
- * Normalises a raw or stored quantity for one record kind.
+ * Coerces a quantity reported by a file (or read back from the ledger) to a finite number,
+ * keeping the sign it was reported with.
  *
- * - `purchase` keeps its sign, so negative corrections reduce totals.
- * - `dispense` / `destruction` are returned as a positive magnitude.
+ * Missing, unusable and zero values become `0`, which the save path treats as "nothing to
+ * write".
  */
-export function normalizeQuantity(
-  kind: ImportKind,
-  quantity: number | null | undefined
-): number {
+export function normalizeQuantity(quantity: number | null | undefined): number {
   const value = Number(quantity ?? 0);
-  if (!Number.isFinite(value)) return 0;
-  return kind === 'purchase' ? value : Math.abs(value);
+  return Number.isFinite(value) ? value : 0;
 }

@@ -67,17 +67,13 @@ interface PendingTransaction {
 }
 
 /**
- * The NET quantity of a DIN in the direction of the import kind.
- *
- * A purchase keeps the file's sign, so a return, reversal or invoice correction (a negative
- * quantity) reduces that DIN's total instead of adding to it. Dispense and destruction rows
- * are handed over as the magnitude the file reported - `import_ledger_rows` applies the
- * direction from the transaction type - so their sign is never applied twice.
+ * The NET quantity of a DIN in the direction of the import kind. Negative rows (returns,
+ * reversals, corrections) are kept and reduce the total - never `Math.abs`.
  */
 function quantityForKind(kind: ImportKind, record: ParsedDinData): number {
-  if (kind === 'purchase') return normalizeQuantity(kind, record.purchased);
-  if (kind === 'dispense') return normalizeQuantity(kind, record.dispensed);
-  return normalizeQuantity(kind, record.dispensed || record.purchased);
+  if (kind === 'purchase') return normalizeQuantity(record.purchased);
+  if (kind === 'dispense') return normalizeQuantity(record.dispensed);
+  return normalizeQuantity(record.dispensed || record.purchased);
 }
 
 /** The most recent dated transaction in a DIN entry, as a ledger calendar day. */
@@ -268,7 +264,7 @@ async function saveImportedIndividualRows(
   },
   mode: ImportMode
 ): Promise<SaveResult> {
-  const valid = rows.filter((row) => row.din && normalizeQuantity(kind, row.quantity) !== 0);
+  const valid = rows.filter((row) => row.din && normalizeQuantity(row.quantity) !== 0);
   const invalidCount = rows.length - valid.length;
 
   const result = await persistTransactions(
@@ -276,7 +272,7 @@ async function saveImportedIndividualRows(
     valid.map((row) => ({
       din: row.din,
       description: row.description,
-      quantity: normalizeQuantity(kind, row.quantity),
+      quantity: normalizeQuantity(row.quantity),
       date: toLedgerDateString(row.date ?? new Date()),
     })),
     fileName,
@@ -290,7 +286,7 @@ async function saveImportedIndividualRows(
       noDin: result.notSent.noDin + rows.filter((row) => !row.din).length,
       noQuantity:
         result.notSent.noQuantity +
-        rows.filter((row) => row.din && normalizeQuantity(kind, row.quantity) === 0).length,
+        rows.filter((row) => row.din && normalizeQuantity(row.quantity) === 0).length,
     },
   };
 }
@@ -324,7 +320,7 @@ async function fetchImportedRecords(kind: ImportKind): Promise<ImportedRecordRow
     id: row.id,
     din: row.din ?? '--------',
     description: row.description ?? 'Unknown',
-    quantity: Number(row.quantity ?? 0),
+    quantity: normalizeQuantity(row.quantity),
     type: config.type,
     source: config.source,
     created_at: row.created_at || new Date().toISOString(),
